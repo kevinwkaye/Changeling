@@ -1,0 +1,117 @@
+name: Build Changeling
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-changeling
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCHANGELING_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Engine render test
+        run: build\Release\changeling_render_test.exe
+
+      - name: Footswitch test
+        run: build\changeling_foot_test_artefacts\Release\changeling_foot_test.exe
+
+      - name: Validate with pluginval
+        id: pluginval
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+          # pluginval is a windowed app, so wait for it and capture its output
+          $proc = Start-Process -FilePath .\pluginval\pluginval.exe -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput pluginval-report.txt -RedirectStandardError pluginval-errors.txt `
+            -ArgumentList '--strictness-level 5 --validate-in-process --skip-gui-tests --timeout-ms 600000 --validate "build\Changeling_artefacts\Release\VST3\Changeling.vst3"'
+          $code = $proc.ExitCode
+          Get-Content pluginval-report.txt -Tail 15
+          Get-Content pluginval-report.txt | Select-String -Pattern "FAILED|!!!|Starting test|ERROR|Error|crash|Exception" | Select-Object -Last 40 | ForEach-Object { Write-Output "::warning::$($_.Line)" }
+          exit $code
+
+      - name: Collect plugin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item -Recurse build\Changeling_artefacts\Release\VST3\Changeling.vst3 dist\
+          Copy-Item build\Changeling_artefacts\Release\Standalone\Changeling.exe dist\Changeling-standalone.exe
+          Copy-Item README.md dist\
+          if (Test-Path pluginval-report.txt) { Copy-Item pluginval-report.txt dist\ }
+
+      # Artifact storage counts against the account quota, so the finished
+      # plugin is published to a 'builds' branch instead.
+      - name: Publish to the builds branch
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\* -DestinationPath Changeling-Windows.zip -Force
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git checkout --orphan builds
+          git rm -r -q --cached .
+          git add -f Changeling-Windows.zip
+          git commit -q -m "Windows build $env:GITHUB_SHA"
+          git push -f origin builds
+
+  # Portability: the Pi pedalboard runs Linux on ARM64, so build natively on an ARM runner
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    needs: windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install JUCE dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
+            libgl1-mesa-dev ninja-build
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCHANGELING_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Engine render test
+        run: ./build/changeling_render_test
+
+      - name: Footswitch test
+        run: ./build/changeling_foot_test_artefacts/Release/changeling_foot_test
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp -r build/Changeling_artefacts/Release/VST3/Changeling.vst3 dist/
+          cp build/Changeling_artefacts/Release/Standalone/Changeling dist/Changeling-standalone
+          cp README.md dist/
+          (cd dist && zip -qr ../Changeling-Linux-ARM64.zip .)
+          file build/Changeling_artefacts/Release/Standalone/Changeling
+
+      - name: Add to the builds branch
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git fetch origin builds
+          git checkout -B builds origin/builds
+          git add -f Changeling-Linux-ARM64.zip
+          git commit -q -m "Linux ARM64 build $GITHUB_SHA"
+          git push origin builds

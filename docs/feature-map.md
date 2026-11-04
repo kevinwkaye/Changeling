@@ -34,7 +34,7 @@ Owners report tracking that is no better on bass than the original's: good in mo
 
 | Original | What it does | Changeling |
 | --- | --- | --- |
-| Poly | Polyphonic tracking. Each note you play gets its own synth voice | Polyphonic tracker with up to 6 voices, using a harmonic-sum spectrum so chords don't spawn ghost notes from overtones. MIDI notes take free voices |
+| Poly | Polyphonic tracking. Each note you play gets its own synth voice | Up to 6 voices. A bank of semitone filters with a harmonic-sum score and overtone subtraction finds chord notes; the fast mono tracker leads single notes. MIDI notes take free voices |
 | Mono | One voice, two oscillators, monophonic tracking. The tightest mode | The new low-latency tracker (see Pitch tracking). Last-note priority from MIDI, with legato glide |
 | Arp | Turns the held chord into a pattern at the tap tempo. Owners report it is fixed at quarter notes of the tap | Same, locked to tap or host tempo. Original pattern and quarter notes by default, with subdivision and pattern on the Deep page (see Questions) |
 | Dry | Synth off. Pitch shifts the dry signal, Sustain compresses it, Modulation modulates the delay | Same. Filter, envelope, ring mod and delay all still work on the dry signal |
@@ -103,8 +103,8 @@ CC 20 to 23 collide with the house footswitch defaults, so this chart lives behi
 The original tracks well on guitar but lags and retriggers below the guitar register. Owners report trouble below A on the E string, octave jumps on low E, and the loudest harmonic being tracked instead of the fundamental. Changeling uses a tracker built for the low end, with a Character control that brings the original's chaos back on purpose.
 
 - **Input chips set the range.** Bass: 28 Hz (drop A on a 5-string) to 1 kHz. Guitar: 70 Hz to 1.5 kHz. Synth/Line: full range.
-- **Fast first guess, then lock.** A note is called after about 1.25 cycles of the waveform, from the time between zero crossings of a fundamental-tracking low-pass that follows the note. A longer autocorrelation window then confirms or corrects it without retriggering. On open E (41 Hz) that is about 30 ms to first sound. One cycle is the physical floor, and any tracker has to wait for it.
-- **No octave hopping.** A subharmonic check keeps the fundamental when the second harmonic is louder, which is common on bass with the neck pickup and on a P Bass.
+- **Short-window lock.** The input is decimated to about 8 kHz and a normalised square difference (McLeod) is computed every 2 ms over a window of a third of each candidate period, so a note is called after about 1.4 cycles: measured 46 ms on low B, 36 ms on open E, under 20 ms across the guitar range. One cycle is the physical floor, and any tracker has to wait for it.
+- **No octave hopping.** Before trusting a period, 2, 3 and 4 times it are checked too, so the fundamental wins when the second harmonic is louder, which is common on bass with the neck pickup and on a P Bass. While a note holds, the tracker stays with the peak nearest it.
 - **No retriggers on decay.** Hysteresis on level and pitch keeps one note while it fades. A new note needs a fresh pluck or a real pitch change of more than 0.6 semitones.
 - **Character: Tight to Wild** (Deep page). Tight is the new tracker. Wild brings back the original's glitches: octave flips on decay, grabbing the loudest harmonic, retriggers, and slow poly attack. Ring mod reacts to those glitches, so the chaos stays musical.
 - **Tracking readout.** Note name, cents and a confidence bar in the strip, so you can see what it heard.
@@ -147,11 +147,17 @@ Pebble taps its foot on every press and leans with the expression pedal.
 - Windows x64 VST3 and standalone from GitHub Actions on every push to `main`, published to the `builds` branch like the other plugins.
 - Linux ARM64 VST3 and standalone for the Pi pedalboard, built natively on GitHub's ARM64 runner and published to the same branch.
 - The engine is plain C++17 with no JUCE, so the render test (bass phrases from low B up, guitar chords, MIDI arps, footswitch and expression events) runs on both platforms in CI.
-- The DSP stays light enough for a Pi 5: 6 voices of two oscillators, one filter each, a ring modulator and one delay. Poly tracking is the heavy part, so it runs at a lower analysis rate on ARM.
+- The DSP is light: six voices, both trackers, ring mod and delay together measure about 2% of one desktop core, so a Pi 5 has plenty of headroom.
 
-## Questions for Kevin
+## Decisions (4 November 2026)
 
-See the chat reply that accompanies this document.
+- Recreate the original Enzo, with MIDI notes, oscillator 2 and the tuner from the Enzo X. No Enzo X drive, modulation or reverb.
+- Bass tracking reaches low B (a 5-string is on the way).
+- Arp: the original's quarter notes by default, pattern and step on the Deep page.
+- Ring mod: fixed carrier by default, Follow on the Deep page.
+- Source defaults to Both.
+- Linux ARM64: VST3 and standalone.
+- Footswitch layout approved as above.
 
 ## Sources
 
