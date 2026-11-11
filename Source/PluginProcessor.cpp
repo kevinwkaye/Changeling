@@ -673,8 +673,9 @@ void ChangelingProcessor::applySnapshot (const ValueTree& t)
 
 void ChangelingProcessor::makeFactoryPresets()
 {
-    // four starting sounds in the red bank; the rest are yours
-    auto make = [&] (int slot, const std::map<String, float>& values)
+    // Twelve starting sounds, each matched by measurement (waveform, brightness, pitch range,
+    // note rate) to a passage in the pedal demos. The blue bank is yours.
+    auto make = [&] (int slot, const char* name, const std::map<String, float>& values)
     {
         ValueTree t ("Snapshot");
         for (auto* p : getParameters())
@@ -682,21 +683,46 @@ void ChangelingProcessor::makeFactoryPresets()
                 if (inSnapshot (rp->getParameterID()))
                     t.setProperty (Identifier (rp->getParameterID()), rp->convertFrom0to1 (rp->getDefaultValue()), nullptr);
         for (const auto& [id, v] : values) t.setProperty (Identifier (id), v, nullptr);
+        t.setProperty ("presetName", name, nullptr);
         slots[(size_t) slot] = t;
     };
     using namespace ParamIDs;
-    // 1 Low synth bass: mono, a sub oscillator an octave down
-    make (0, { { mode, 1 }, { wave, 0 }, { cutoff, 0.42f }, { env, 0.6f }, { bandwidth, 0.45f }, { sustain, 0.6f }, { mix, 0.85f },
-               { glide, 0.1f }, { delayLevel, 0.0f }, { osc2Interval, 1 }, { osc2Level, 0.6f }, { mod, 0.08f } });
-    // 2 Glass chords: poly, square, soft state-variable low-pass, a little echo
-    make (1, { { mode, 0 }, { wave, 1 }, { filterType, 3 }, { cutoff, 0.62f }, { env, 0.3f }, { bandwidth, 0.25f }, { sustain, 0.75f },
-               { mix, 0.6f }, { mod, 0.35f }, { delayLevel, 0.35f }, { feedback, 0.35f } });
-    // 3 Sparkarp: the arp at a racing tap tempo, as Meris's own preset does
-    make (2, { { mode, 2 }, { wave, 1 }, { ParamIDs::bpm, 750.0f }, { cutoff, 0.5f }, { env, 0.7f }, { bandwidth, 0.55f }, { sustain, 0.3f },
-               { mix, 0.7f }, { delayLevel, 0.4f }, { feedback, 0.45f } });
-    // 4 Ring chaos: ring mod on, tracking loose and glitchy
-    make (3, { { mode, 0 }, { wave, 0 }, { ring, 0.62f }, { character, 0.7f }, { cutoff, 0.7f }, { env, 0.4f }, { bandwidth, 0.6f },
-               { mix, 0.7f }, { mod, 0.2f }, { delayLevel, 0.3f }, { feedback, 0.5f } });
+    const char* tempo = ParamIDs::bpm;
+
+    // ---- red: mono basses and low lines ----
+    make (0, "LOW SAW", { { mode, 1 }, { wave, 0 }, { cutoff, 0.47f }, { env, 0.35f }, { bandwidth, 0.3f }, { sustain, 0.85f },
+                          { glide, 0.2f }, { mod, 0.15f }, { mix, 0.9f }, { delayLevel, 0.0f } });
+    make (1, "HOLLOW SQUARE", { { mode, 1 }, { wave, 1 }, { cutoff, 0.74f }, { env, 0.3f }, { bandwidth, 0.25f }, { sustain, 0.9f },
+                                { glide, 0.38f }, { mod, 0.1f }, { mix, 0.85f }, { delayLevel, 0.15f }, { feedback, 0.3f } });
+    make (2, "SUB OCTAVE", { { mode, 1 }, { wave, 0 }, { cutoff, 0.33f }, { env, 0.2f }, { bandwidth, 0.2f }, { sustain, 0.9f },
+                             { glide, 0.12f }, { mod, 0.05f }, { mix, 0.9f }, { delayLevel, 0.0f }, { osc2Interval, 1 }, { osc2Level, 0.8f } });
+    make (3, "ACID SWEEP", { { mode, 1 }, { wave, 0 }, { cutoff, 0.3f }, { env, 0.85f }, { bandwidth, 0.78f }, { sustain, 0.6f },
+                             { glide, 0.25f }, { mod, 0.08f }, { mix, 0.9f }, { delayLevel, 0.2f }, { feedback, 0.35f } });
+
+    // ---- yellow: chords and pads ----
+    make (4, "GLASS STABS", { { mode, 0 }, { wave, 1 }, { filterType, 3 }, { cutoff, 0.42f }, { env, 0.25f }, { bandwidth, 0.2f },
+                              { sustain, 0.8f }, { mod, 0.1f }, { mix, 0.75f }, { delayLevel, 0.2f }, { feedback, 0.3f } });
+    make (5, "BRIGHT WASH", { { mode, 0 }, { wave, 0 }, { cutoff, 0.7f }, { env, 0.2f }, { bandwidth, 0.25f }, { sustain, 1.0f },
+                              { mod, 0.45f }, { mix, 0.7f }, { delayLevel, 0.5f }, { feedback, 0.55f } });
+    make (6, "SOFT ORGAN", { { mode, 0 }, { wave, 1 }, { cutoff, 0.5f }, { env, 0.1f }, { bandwidth, 0.15f }, { sustain, 0.95f },
+                             { mod, 0.05f }, { mix, 0.75f }, { delayLevel, 0.1f }, { osc2Interval, 3 }, { osc2Level, 0.4f } });
+    make (7, "TOUCH BRASS", { { mode, 0 }, { wave, 0 }, { envType, 1 }, { cutoff, 0.48f }, { env, 0.6f }, { bandwidth, 0.4f },
+                              { sustain, 0.7f }, { mod, 0.2f }, { mix, 0.75f }, { delayLevel, 0.15f } });
+
+    // ---- green: arps, leads and trouble ----
+    make (8, "SPARKLE ARP", { { mode, 2 }, { wave, 1 }, { tempo, 246.0f }, { cutoff, 0.6f }, { env, 0.5f }, { bandwidth, 0.35f },
+                              { sustain, 0.3f }, { arpGate, 0.5f }, { arpOctaves, 1 }, { mix, 0.7f }, { delayLevel, 0.4f }, { feedback, 0.45f } });
+    make (9, "HIGH PLUCKS", { { mode, 1 }, { wave, 1 }, { pitch, 12 }, { cutoff, 0.55f }, { env, 0.5f }, { bandwidth, 0.3f },
+                              { sustain, 0.1f }, { glide, 0.0f }, { mod, 0.0f }, { mix, 0.7f }, { delayLevel, 0.35f }, { feedback, 0.4f } });
+    make (10, "GLIDE LEAD", { { mode, 1 }, { wave, 1 }, { pitch, 12 }, { filterType, 3 }, { cutoff, 0.5f }, { env, 0.1f }, { bandwidth, 0.1f },
+                              { sustain, 0.95f }, { glide, 0.7f }, { mod, 0.0f }, { mix, 0.8f }, { delayLevel, 0.3f }, { feedback, 0.4f } });
+    make (11, "RING NOISE", { { mode, 0 }, { wave, 0 }, { ring, 0.55f }, { character, 0.6f }, { cutoff, 0.8f }, { env, 0.3f }, { bandwidth, 0.5f },
+                              { sustain, 0.7f }, { mod, 0.25f }, { mix, 0.7f }, { delayLevel, 0.4f }, { feedback, 0.6f } });
+}
+
+String ChangelingProcessor::presetName (int slot) const
+{
+    return hasPreset (slot) ? slots[(size_t) slot].getProperty ("presetName").toString() : String();
 }
 
 void ChangelingProcessor::savePreset (int slot)
@@ -712,7 +738,8 @@ void ChangelingProcessor::loadPreset (int slot)
     if (! hasPreset (slot)) return;
     applySnapshot (slots[(size_t) slot]);
     selected = slot;
-    say ("PRESET " + String (slot + 1));
+    const auto name = presetName (slot);
+    say ("PRESET " + String (slot + 1) + (name.isNotEmpty() ? String::fromUTF8 (" \xc2\xb7 ") + name : String()));
 }
 
 bool ChangelingProcessor::hasPreset (int slot) const
@@ -768,7 +795,7 @@ void ChangelingProcessor::setStateInformation (const void* data, int sizeInBytes
         for (int i = 0; i < kPresets && i < presets.getNumChildren(); ++i)
         {
             const auto slot = presets.getChild (i);
-            slots[(size_t) i] = slot.getNumChildren() > 0 ? slot.getChild (0).createCopy() : ValueTree();
+            if (slot.getNumChildren() > 0) slots[(size_t) i] = slot.getChild (0).createCopy();   // an empty saved slot keeps its factory sound
         }
         tree.removeChild (presets, nullptr);
     }

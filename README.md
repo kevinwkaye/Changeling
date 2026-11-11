@@ -77,7 +77,26 @@ In Ableton, Changeling is an audio effect that also listens to MIDI. Make a MIDI
 
 ## Presets
 
-Sixteen slots in red, yellow, green and blue banks. Tap a slot to load it, hold it to save. The red bank starts with four sounds: a low synth bass, glass chords, a racing arp and ring chaos. Presets save the sound and leave your instrument settings alone. Everything saves with your Ableton set.
+Sixteen slots in red, yellow, green and blue banks. Tap a slot to load it, hold it to save. Presets save the sound and leave your instrument settings alone. Everything saves with your Ableton set.
+
+Twelve slots come loaded, each matched to a passage in the pedal's demos by measuring its waveform, brightness, pitch range and note rate. The blue bank is empty for your own.
+
+| Slot | Name | Mode | What it is |
+| --- | --- | --- | --- |
+| 1 | Low Saw | Mono | A warm, held saw bass with a little glide |
+| 2 | Hollow Square | Mono | A bright square that slides between notes |
+| 3 | Sub Octave | Mono | Dark saw with a second oscillator an octave down |
+| 4 | Acid Sweep | Mono | A peaky filter that opens hard on every note |
+| 5 | Glass Stabs | Poly | Soft, rounded square chords with a short echo |
+| 6 | Bright Wash | Poly | Detuned saws held for as long as you hold, in long echoes |
+| 7 | Soft Organ | Poly | Square with an octave on top, steady and plain |
+| 8 | Touch Brass | Poly | The filter follows how hard you play |
+| 9 | Sparkle Arp | Arp | Your chord as a two-octave square pattern at 246 BPM |
+| 10 | High Plucks | Mono | Short square blips an octave up, with echo |
+| 11 | Glide Lead | Mono | A near-pure tone an octave up with long, slow glides |
+| 12 | Ring Noise | Poly | Ring mod and loose tracking, for the clangy passages |
+
+Loading a preset shows its name beside FOOTSWITCHES for a moment.
 
 ## Footswitches and expression (optional)
 

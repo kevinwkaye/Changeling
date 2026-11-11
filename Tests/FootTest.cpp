@@ -231,6 +231,32 @@ int main (int argc, char** argv)
         check (r.proc.getEngine().activeVoices() >= 1, "a note on channel 16 still plays the synth");
     }
 
+    std::printf ("Factory presets\n");
+    {
+        int named = 0, sounding = 0;
+        for (int slot = 0; slot < 12; ++slot)
+        {
+            Rig pr;
+            if (pr.proc.presetName (slot).isNotEmpty()) ++named;
+            pr.proc.loadPreset (slot);
+            pr.pump (20);
+            float peak = 0.0f; bool finite = true;
+            for (int k = 0; k < 150; ++k)
+            {
+                MidiBuffer m;
+                if (k == 1) for (int n : { 48, 55, 60 }) m.addEvent (MidiMessage::noteOn (1, n, (uint8) 100), 0);
+                pr.block (m);
+                for (int i = 0; i < 256; ++i) { const float v = pr.buffer.getSample (0, i); finite = finite && std::isfinite (v); peak = jmax (peak, std::abs (v)); }
+            }
+            if (finite && peak > 0.02f && peak <= 1.0f) ++sounding;
+            else std::printf ("       slot %d: peak %.3f\n", slot + 1, peak);
+        }
+        check (named == 12, "twelve presets are loaded and named");
+        check (sounding == 12, String (sounding) + " of 12 presets sound from a keyboard chord, under full scale");
+        Rig pr;
+        check (! pr.proc.hasPreset (12) && ! pr.proc.hasPreset (15), "the blue bank is empty");
+    }
+
     std::printf (failures == 0 ? "All passed\n" : "%d FAILED\n", failures);
     return failures == 0 ? 0 : 1;
 }

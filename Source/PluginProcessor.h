@@ -51,6 +51,7 @@ public:
     void savePreset (int slot);
     void loadPreset (int slot);
     bool hasPreset (int slot) const;
+    juce::String presetName (int slot) const;
     void stepPreset (int direction);
     int selectedPreset() const { return selected; }
 
