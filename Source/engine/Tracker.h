@@ -46,7 +46,7 @@ public:
         dcBlock.highpass (18.0f, 0.707f, sr);
         buf.fill (0.0f);
         pos = 0; written = 0; counter = 0; hopCounter = 0;
-        envFast = envSlow = 0.0f;
+        envFast = envSlow = 0.0f; noiseFloor = 1.0e-4f; gate = 2.0e-4f;
         fastA = std::exp (-1.0f / (0.0007f * sr)); fastR = std::exp (-1.0f / (0.030f * sr));
         slowA = std::exp (-1.0f / (0.040f * sr)); slowR = std::exp (-1.0f / (0.250f * sr));
         state = Idle; note = -1.0f; shown = -1.0f; clarity = 0.0f;
@@ -68,7 +68,7 @@ public:
             emphHz = emph;
             emphasis.lowpass (std::min (emph, fsA * 0.45f), 0.707f, fsA);
         }
-        gate = 0.0009f + 0.03f * (1.0f - s.sensitivity) * (1.0f - s.sensitivity);
+
     }
 
     // Feed one input sample. Returns the event decided at this sample, if any.
@@ -88,6 +88,13 @@ public:
         ++written;
         if (sinceOnset < (1 << 20)) ++sinceOnset;
         if (refractory > 0) --refractory;
+
+        // the noise floor: drops quickly, creeps up slowly, and only between notes
+        if (envFast < noiseFloor) noiseFloor += (envFast - noiseFloor) * 0.02f;
+        else if (state == Idle) noiseFloor *= 1.0f + 0.35f / fsA;   // about +3 dB per second
+        noiseFloor = std::max (1.0e-5f, std::min (0.02f, noiseFloor));
+        const float sens = 0.25f * std::pow (16.0f, 1.0f - settings.sensitivity);   // 0.25x .. 4x, 1x at noon
+        gate = std::max (2.0e-4f * sens, noiseFloor * 3.5f * sens);
 
         detectOnset();
         if (++hopCounter < kHop) return Event::None;
@@ -109,6 +116,10 @@ public:
 
 private:
     static constexpr int kBuf = 1024, kHop = 16; // 1024 analysis samples is about 128 ms
+  public:
+    static inline int kMinWin = 40, kAgree = 3;
+    static inline float kWinFrac = 0.5f, kAgreeTol = 0.35f;
+  private:
     enum State { Idle, Seeking, Active };
 
     float wild() const { return clamp01 (std::max (settings.character, boost)); }
@@ -141,7 +152,7 @@ private:
         return m > 1.0e-9f ? 2.0f * acf / m : 0.0f;
     }
 
-    int windowFor (int tau) const { return std::max (32, tau / 3); }
+    int windowFor (int tau) const { return std::max (kMinWin, (int) ((float) tau * kWinFrac)); }
 
     // Returns a period in analysis samples (fractional), or 0 when nothing is clear yet.
     // waiting is set when a candidate exists but its octave check needs more data.
@@ -266,9 +277,9 @@ private:
         if (onsetPending)
         {
             onsetPending = false;
-            if (state == Active || state == Idle) { state = Seeking; seekStart = written; }
+            if (state == Active || state == Idle) { state = Seeking; seekStart = written; agree = 0; }
         }
-        if (state == Idle && aboveGate) { state = Seeking; seekStart = written; sinceOnset = std::min (sinceOnset, 8); }
+        if (state == Idle && aboveGate) { state = Seeking; seekStart = written; sinceOnset = std::min (sinceOnset, 8); agree = 0; }
 
         // data since the onset (plus a little pre-roll), or everything while a note holds
         const int valid = state == Seeking ? std::min (full, sinceOnset + 6) : full;
@@ -280,14 +291,15 @@ private:
 
         if (state == Seeking)
         {
-            const float prevCandidate = candidate;
+            if (est > 0.0f && clar > 0.80f - 0.15f * w && std::abs (est - candidate) < kAgreeTol) ++agree;
+            else agree = est > 0.0f ? 1 : 0;
             candidate = est;
             if (! aboveGate && written - seekStart > (long long) (0.08f * fsA))
             {
                 if (note >= 0.0f) { ev = Event::NoteOff; note = -1.0f; }
                 state = Idle;
             }
-            else if (est > 0.0f && clar > 0.80f - 0.15f * w && (std::abs (est - prevCandidate) < 0.5f || w > 0.7f))
+            else if (est > 0.0f && clar > 0.80f - 0.15f * w && (agree >= kAgree || (w > 0.7f && agree >= 1)))
             {
                 const bool retrigger = note >= 0.0f;
                 note = est; shown = est; notePeak = std::max (envFast, gate * 2.0f);
@@ -303,7 +315,9 @@ private:
         else if (state == Active)
         {
             notePeak = std::max (notePeak * 0.9995f, envFast);
-            if (envFast < gate * (0.55f + 0.3f * w)) ++belowGate; else belowGate = 0;
+            // a clean, clear note keeps sounding as it fades, down to near the noise floor
+            const bool clearNote = clarity > 0.85f && envFast > noiseFloor * 2.0f;
+            if (envFast < gate * (0.55f + 0.3f * w) && ! clearNote) ++belowGate; else belowGate = 0;
             const float holdS = 0.015f + 0.15f * settings.noteHold * settings.noteHold;
             if ((float) belowGate > holdS * fsA / (float) kHop)
             {
@@ -324,9 +338,10 @@ private:
                     // an octave jump mid-note is almost always a harmonic: needs many votes
                     if (++octaveVotes > 12) { note = est; ev = Event::NoteChange; octaveVotes = 0; }
                 }
-                else if (++changeVotes >= (w > 0.6f ? 1 : 2))
+                else
                 {
-                    note = est; changeVotes = 0; ev = Event::NoteChange;
+                    if (changeVotes > 0 && std::abs (est - changeTo) < kAgreeTol) ++changeVotes; else { changeVotes = 1; changeTo = est; }
+                    if (changeVotes >= (w > 0.6f ? 1 : kAgree)) { note = est; changeVotes = 0; ev = Event::NoteChange; }
                 }
                 shown = note;
             }
@@ -354,131 +369,12 @@ private:
     int pos = 0;
     long long written = 0, seekStart = 0;
     int tauMin = 6, tauMax = 300;
-    float envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, gate = 0.002f;
+    float noiseFloor = 1.0e-4f, envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, gate = 0.002f;
     int sinceOnset = 1 << 20, refractory = 0, belowGate = 0, changeVotes = 0, octaveVotes = 0, flipHops = 0;
     bool onsetPending = false;
     State state = Idle;
-    float candidate = -100.0f, note = -1.0f, shown = -1.0f, estimate = -1.0f, clarity = 0.0f, notePeak = 0.01f, lastLockMs = 0.0f, boost = 0.0f;
+    int agree = 0;
+    float changeTo = 0.0f, candidate = -100.0f, note = -1.0f, shown = -1.0f, estimate = -1.0f, clarity = 0.0f, notePeak = 0.01f, lastLockMs = 0.0f, boost = 0.0f;
     Rng rng;
-};
-
-// Polyphonic note finder for chords: a bank of semitone band-passes at the analysis
-// rate, a harmonic-sum salience, and harmonic subtraction so overtones don't spawn ghost
-// notes. Low chords take longer, as on the original. Mono notes come from MonoTracker.
-class PolyTracker
-{
-public:
-    static constexpr int kLo = 26, kHi = 88, kN = kHi - kLo + 1, kMaxNotes = 6;
-
-    void prepare (double sampleRate)
-    {
-        sr = (float) sampleRate;
-        decim = std::max (1, (int) std::lround (sr / 8000.0f));
-        fsA = sr / (float) decim;
-        aa[0].lowpass (fsA * 0.36f, 0.54f, sr); aa[1].lowpass (fsA * 0.36f, 1.31f, sr);
-        aa[0].reset(); aa[1].reset();
-        for (int i = 0; i < kN; ++i)
-        {
-            const float f = mtof ((float) (kLo + i));
-            bank[(size_t) i].bandpass (std::min (f, fsA * 0.45f), 17.0f, fsA);
-            bank[(size_t) i].reset();
-            energy[(size_t) i] = 0.0f;
-            const float tc = std::max (0.012f, 4.0f / f);
-            coef[(size_t) i] = std::exp (-1.0f / (tc * fsA));
-            onFor[(size_t) i] = 0; offFor[(size_t) i] = 0; isOn[(size_t) i] = false;
-            norm[(size_t) i] = std::sqrt (100.0f / f);
-        }
-        counter = 0; hop = 0;
-    }
-
-    void setSpeed (float quick01, float wild01) { speed = quick01; wildness = wild01; }
-    void setLowest (int midi) { lowest = std::max (kLo, midi); }
-
-    // returns true when the note set was updated
-    bool push (float x)
-    {
-        const float y = aa[1].process (aa[0].process (x));
-        if (++counter < decim) return false;
-        counter = 0;
-        for (int i = 0; i < kN; ++i)
-        {
-            const float b = bank[(size_t) i].process (y);
-            energy[(size_t) i] = b * b + coef[(size_t) i] * (energy[(size_t) i] - b * b);
-        }
-        if (++hop < 32) return false;   // 4 ms
-        hop = 0;
-        decide();
-        return true;
-    }
-
-    bool on (int midi) const { return midi >= kLo && midi <= kHi && isOn[(size_t) (midi - kLo)]; }
-
-private:
-    void decide()
-    {
-        // amplitude per band, corrected for the wider bands of higher notes
-        std::array<float, kN> e;
-        float peak = 0.0f;
-        for (int i = 0; i < kN; ++i) { e[(size_t) i] = std::sqrt (energy[(size_t) i]) * norm[(size_t) i]; peak = std::max (peak, e[(size_t) i]); }
-        std::array<bool, kN> want {};
-        const float absGate = 0.003f;
-        if (peak > absGate)
-        {
-            // harmonic sum: a note scores with its overtones, so fundamentals beat their harmonics
-            static const int harm[] = { 0, 12, 19, 24, 28, 31 };
-            static const float hw[] = { 1.0f, 0.7f, 0.5f, 0.4f, 0.3f, 0.25f };
-            auto salience = [&] (int i)
-            {
-                float sum = 0.0f;
-                for (int h = 0; h < 6; ++h) if (i + harm[h] < kN) sum += hw[h] * e[(size_t) (i + harm[h])];
-                return sum;
-            };
-            const float sub = 1.0f - 0.7f * wildness;
-            float first = 0.0f;
-            for (int n = 0; n < kMaxNotes; ++n)
-            {
-                int best = -1; float bv = 0.0f;
-                for (int i = 0; i < kN; ++i)
-                {
-                    if (kLo + i < lowest || want[(size_t) i]) continue;
-                    const float here = e[(size_t) i];
-                    if (here < absGate * 0.5f) continue;
-                    if (i > 0 && e[(size_t) (i - 1)] > here) continue;      // a peak along the keyboard
-                    if (i < kN - 1 && e[(size_t) (i + 1)] > here) continue;
-                    const float sv = salience (i);
-                    if (sv > bv) { bv = sv; best = i; }
-                }
-                if (best < 0) break;
-                if (n == 0) first = bv;
-                else if (bv < first * (0.38f - 0.12f * wildness)) break;
-                want[(size_t) best] = true;
-                // take this note's overtones out before looking for the next note
-                const float a0 = e[(size_t) best];
-                for (int h = 1; h < 6; ++h)
-                {
-                    const int j = best + harm[h];
-                    if (j < kN) e[(size_t) j] = std::max (0.0f, e[(size_t) j] - a0 * 1.1f * sub);
-                }
-                if (best > 0) e[(size_t) (best - 1)] *= 0.25f;   // neighbours leak through the bank
-                if (best < kN - 1) e[(size_t) (best + 1)] *= 0.25f;
-            }
-        }
-        const int needOn = speed > 0.5f ? 2 : 3 + (int) (wildness * 3.0f);
-        for (int i = 0; i < kN; ++i)
-        {
-            if (want[(size_t) i]) { ++onFor[(size_t) i]; offFor[(size_t) i] = 0; }
-            else { ++offFor[(size_t) i]; onFor[(size_t) i] = 0; }
-            if (! isOn[(size_t) i] && onFor[(size_t) i] >= needOn) isOn[(size_t) i] = true;
-            if (isOn[(size_t) i] && offFor[(size_t) i] >= 12) isOn[(size_t) i] = false;
-        }
-    }
-
-    float sr = 48000.0f, fsA = 8000.0f, speed = 0.5f, wildness = 0.0f;
-    int decim = 6, counter = 0, hop = 0, lowest = kLo;
-    Biquad aa[2];
-    std::array<Biquad, kN> bank;
-    std::array<float, kN> energy {}, coef {}, norm {};
-    std::array<int, kN> onFor {}, offFor {};
-    std::array<bool, kN> isOn {};
 };
 } // namespace chg

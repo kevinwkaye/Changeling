@@ -38,7 +38,7 @@ The Enzo hides a second job behind each knob, reached by holding ALT. Changeling
 | Pitch | Synth pitch, or your pitch in Dry, in semitones | Glide between notes |
 | Cutoff | The filter | Type: ladder low, band or high-pass, or state-variable low, band or high-pass |
 | Env | How far the envelope opens the filter | Bandwidth: wide and gentle to narrow and peaky |
-| Sustain | How long synth notes hold. At zero they follow your playing | Ring mod frequency. Fully left is off |
+| Sustain | How long synth notes hold: a short pluck at zero, held for as long as you hold the note at the top. Notes come in at full level and stay steady, as on the pedal | Ring mod frequency. Fully left is off |
 | Mod | Detunes the two oscillators | Delay feedback |
 | Mix | Your signal and the synth. Both are at full level at noon | Delay level |
 
@@ -51,14 +51,16 @@ The two switch alt jobs are on screen too. **Wave** is saw or square (Alt + Bypa
 The original lags and retriggers below the guitar register. Changeling's tracker is built for the low end:
 
 - **Input** sets the range. Bass reaches low B (31 Hz). Guitar starts at drop C. Synth covers everything.
-- First notes speak after about 1.4 cycles of the note: 46 ms on low B, 36 ms on open E, under 20 ms across the guitar range. One cycle is the physical floor for any tracker.
+- A note is called once three readings in a row agree, so the first pitch you hear is the right one. On the test phrases that takes about 20 ms on guitar and about 45 ms on bass (54 ms on low B). One cycle of the note is the physical floor for any tracker.
+- Bends, slides, vibrato and hammer-ons are followed continuously, without retriggering.
+- The gate follows your noise floor, so quiet playing and a turned-down volume knob track the same as loud playing.
 - The octave guard keeps the real note when the second harmonic is louder than the fundamental, which happens a lot on bass.
 - A fading note stays one note, with no retriggers and no octave flips.
 - **Character** on the Deep page runs from Tight to Wild. Wild brings back the original's glitches: octave flips on the decay, grabbing harmonics, nervous retriggers. Holding footswitch C turns it fully wild while ring chaos plays.
 
 The tracking strip under Pebble shows the note it heard, its frequency and how quickly it locked. Click the note for the tuner, which mutes the output while it's open.
 
-Poly mode listens for chords with a bank of filters, one per semitone, so low chords take longer to settle, as on the original. Use Mono for bass lines.
+Poly mode listens to the first 40 ms after a strum, finds the notes and takes each one's overtones out before looking for the next. It then holds the chord until the strings fade or you play again. On test chords it plays almost no wrong notes, but it catches about half of a six-string chord's exact notes: you hear a clean, smaller voicing. Use Mono for bass lines and leads.
 
 ## Playing from a MIDI keyboard
 
@@ -137,5 +139,7 @@ cmake --build build --config Release
 ```
 
 `changeling_render_test` plays bass and guitar through the tracker and every mode, MIDI chords, arpeggios, the latch, ring chaos and the runaway delay, and fails on wrong notes, slow locks, retriggers, octave flips, NaNs, clipping, clicks or silence. Pass a folder to write WAV files.
+
+`changeling_track_bench` plays modelled bass and guitar phrases (pick, pickup, bends, vibrato, slides, hammer-ons, palm mutes, hum and noise) and scores what the synth plays every 10 ms against what was really played. It fails if the right pitch sounds less than 97% of the time, on any octave error or missed note, or if chords play more than 6% wrong tones.
 
 `changeling_foot_test` sends plain 127/0 messages and checks every footswitch tap, hold and combo does its job and nothing else, including with the original pedal map on. `changeling_foot_test --snapshot <folder>` writes the three panel pages as PNGs.

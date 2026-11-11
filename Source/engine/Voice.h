@@ -19,13 +19,18 @@ struct Filter
         fc = std::max (fc, 16.0f);
         if (type < 3)
         {
-            const float g = 1.0f - std::exp (-kTwoPi * fc / sr);
+            // run twice per sample: keeps the tuning true and the top end clean when wide open
+            const float g = 1.0f - std::exp (-kPi * fc / sr);
             const float k = res * 3.9f;
-            const float in = softClip (x - k * (s[3] - 0.5f * x * res));
-            s[0] += g * (in - s[0]);
-            s[1] += g * (s[0] - s[1]);
-            s[2] += g * (s[1] - s[2]);
-            s[3] += g * (softClip (s[2]) - s[3]);
+            float in = 0.0f;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                in = softClip (x - k * (s[3] - 0.5f * x * res));
+                s[0] += g * (in - s[0]);
+                s[1] += g * (s[0] - s[1]);
+                s[2] += g * (s[1] - s[2]);
+                s[3] += g * (softClip (s[2]) - s[3]);
+            }
             const float comp = 1.0f + res * 0.7f; // keep the level up as resonance rises
             if (type == 0) return s[3] * comp;
             if (type == 1) return (s[1] - s[3]) * 1.8f * comp;                       // shelving band-pass
@@ -54,11 +59,12 @@ struct Voice
     bool sustained = false;  // note let go while the sustain pedal is held
     bool fromMidi = false;
     bool arp = false;
+    bool quickRelease = false;   // a false start: fade fast
     int key = -1;            // the note that owns this voice (integer, for note-offs)
     long long age = 0;
     float target = 60.0f, current = 60.0f, glideCoef = 0.0f;
     float velocity = 1.0f;
-    float amp = 0.0f, fenv = 0.0f;
+    float amp = 0.0f, fenv = 0.0f, hold = 1.0f;
     bool fenvAttack = false;
     float ph1 = 0.0f, ph2 = 0.0f, ringPh = 0.0f, ringHz = 200.0f;
     double offAt = 0.0;      // arp gate end, in samples
@@ -68,8 +74,8 @@ struct Voice
     {
         if (! active) { current = midi; filter.reset(); amp = 0.0f; ph1 = 0.0f; ph2 = 0.37f; }
         key = k; target = midi; velocity = vel; fromMidi = midiSource;
-        active = true; gate = true; sustained = false; age = when;
-        if (! legato) { fenvAttack = true; }
+        active = true; gate = true; sustained = false; quickRelease = false; age = when;
+        if (! legato) { fenvAttack = true; hold = 1.0f; }
     }
     void release() { gate = false; }
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Effects.h"
+#include "ChordTracker.h"
 #include "Tracker.h"
 #include "Voice.h"
 #include <array>
@@ -44,7 +45,7 @@ public:
     {
         sr = (float) sampleRate;
         mono.prepare (sampleRate);
-        poly.prepare (sampleRate);
+        chord.prepare (sampleRate);
         echo.prepare (sr);
         shiftL.prepare (sr); shiftR.prepare (sr);
         compL.prepare (sr); compR.prepare (sr);
@@ -56,7 +57,7 @@ public:
         monoAudioVoice = monoMidiVoice = -1;
         arpCounter = 0.0; arpIndex = 0; arpRunning = false; now = 0; prevMode = -1;
         attackCoef = std::exp (-1.0f / (0.002f * sr));
-        configured = false;
+        configured = false; smoothReady = false;
     }
 
     // ---- MIDI from a keyboard (call before process for the block) ----
@@ -78,17 +79,20 @@ public:
 
     void process (float* L, float* R, int n, const EngineParams& p)
     {
+        if (! smoothReady) { cutoffSm = p.cutoff; mixSm = p.mix; smoothReady = true; }
         configure (p);
         applyPendingMidi (p);
 
         const float holdCoef = std::exp (-1.0f / (6.0f * sr));
         const float relS = 0.015f + p.sustain * p.sustain * 2.5f;
         const float relCoef = std::exp (-1.0f / (relS * sr));
+        const float sustainCoef = p.sustain > 0.97f ? 1.0f : std::exp (-1.0f / (0.12f * std::pow (80.0f, p.sustain) * sr));
+        const float quickCoef = std::exp (-1.0f / (0.015f * sr));
         const float fdecS = 0.1f + 1.1f * p.sustain;
         const float fdecCoef = std::exp (-1.0f / (fdecS * sr));
         const float glideS = 0.002f + p.glide * p.glide * 2.0f;
         const float glideCoef = std::exp (-1.0f / (glideS * sr));
-        const float baseCut = 40.0f * std::pow (400.0f, p.cutoff);
+
         const float bendSemis = bend * (p.bendRange == 0 ? 2.0f : (p.bendRange == 1 ? 7.0f : 12.0f));
         const float detuneCents = p.mod * 50.0f + wheel * 30.0f;
         static const float intervals[5] = { 0.0f, -12.0f, 7.0f, 12.0f, 19.0f };
@@ -98,8 +102,7 @@ public:
         const float oscNorm = 1.0f / (1.0f + osc2Gain);
         const bool dry = p.mode == ModeDry;
         const bool useAudio = p.source != SourceMidi && ! dry;
-        const float dryGain = std::min (1.0f, 2.0f * (1.0f - p.mix));
-        const float wetGain = std::min (1.0f, 2.0f * p.mix);
+
         const float ringTarget = std::max (p.ring > 0.02f ? 1.0f : p.ring / 0.02f, chaosSm);
         const float fixedRingHz = 20.0f * std::pow (150.0f, p.ring);
         static const float ratios[11] = { 0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f };
@@ -128,7 +131,7 @@ public:
             chaosSm += ((p.chaos ? 1.0f : 0.0f) - chaosSm) * 0.0005f;
             mono.wildBoost (chaosSm);
             const auto ev = mono.push (in);
-            const bool polyTick = poly.push (in);
+            const bool polyTick = (p.mode == ModePoly || p.mode == ModeArp) && chord.push (in);   // chords are only listened for when needed
             const float lvl = mono.level();
             followEnv += (std::min (1.0f, lvl * 6.0f) - followEnv) * (lvl * 6.0f > followEnv ? 0.02f : 0.0006f);
 
@@ -140,6 +143,14 @@ public:
             if (useAudio && ! p.bypass && (polyTick || ev != MonoTracker::Event::None) && (p.mode == ModePoly || p.mode == ModeArp))
                 syncPolyNotes (p);
 
+            // bends, slides and vibrato: the mono voice follows the tracked pitch continuously
+            if (p.mode == ModeMono && monoAudioVoice >= 0 && mono.active())
+            {
+                auto& mv = voices[(size_t) monoAudioVoice];
+                const float tracked = mono.currentNote();
+                if (mv.key == kMonoKey && mv.gate && tracked > 0.0f) mv.target = tracked;
+            }
+
             // ---- arpeggiator ----
             if (p.mode == ModeArp && ! p.bypass) runArp (p, stepSamples);
 
@@ -150,6 +161,12 @@ public:
                 chaosCountdown = (int) ((0.04f + rng.uni() * 0.1f) * sr);
             }
             ringMixSm += (ringTarget - ringMixSm) * 0.002f;
+
+            // knobs glide, so sweeps never step or zip
+            cutoffSm += (p.cutoff - cutoffSm) * 0.0025f;
+            mixSm += (p.mix - mixSm) * 0.0025f;
+            const float baseCut = 40.0f * std::pow (400.0f, cutoffSm);
+            const float dryGain = std::min (1.0f, 2.0f * (1.0f - mixSm)), wetGain = std::min (1.0f, 2.0f * mixSm);
 
             // ---- voices ----
             voiceGain += (gainTarget - voiceGain) * 0.002f;
@@ -175,12 +192,14 @@ public:
                 else if (v.sustained) ampTarget = v.amp * holdCoef;
                 else if (v.gate)
                 {
-                    if (v.fromMidi || v.arp) ampTarget = 1.0f;
-                    else ampTarget = p.sustain + (1.0f - p.sustain) * mono.noteLevel();
+                    // a synth envelope, as on the pedal: full level at once, then Sustain sets how
+                    // long the note holds. It doesn't follow the string's own decay.
+                    if (! v.fromMidi && ! v.arp) v.hold *= sustainCoef;
+                    ampTarget = v.hold;
                 }
                 const float vel = p.velocityMode == 1 ? v.velocity : (p.velocityMode == 2 ? 0.6f + 0.4f * v.velocity : 1.0f);
                 if (ampTarget > v.amp) v.amp = ampTarget + attackCoef * (v.amp - ampTarget);
-                else v.amp = ampTarget + (v.gate || v.latched || v.sustained ? 0.9995f : relCoef) * (v.amp - ampTarget);
+                else v.amp = ampTarget + (v.gate || v.latched || v.sustained ? 0.9995f : (v.quickRelease ? quickCoef : relCoef)) * (v.amp - ampTarget);
                 if (! v.gate && ! v.latched && ! v.sustained && v.amp < 1.0e-4f) { v.active = false; continue; }
 
                 // filter envelope: triggered, or following your playing
@@ -278,10 +297,21 @@ public:
     std::atomic<int> uiVoiceMask { 0 }, uiMidiMask { 0 }, uiArpStep { -1 }, uiOnsets { 0 }, uiArpSteps { 0 };
     std::atomic<bool> uiLatched { false };
 
-    // for the render test
+    // for the render test and the tracking bench
+    struct VoiceView { bool on = false; float pitch = 0.0f, amp = 0.0f; bool midi = false; int key = 0; bool held = false; };
+    std::array<VoiceView, kVoices> voiceView() const
+    {
+        std::array<VoiceView, kVoices> out {};
+        for (int i = 0; i < kVoices; ++i)
+        {
+            const auto& v = voices[(size_t) i];
+            out[(size_t) i] = { v.active, v.current, v.amp, v.fromMidi, v.key, v.gate || v.latched };
+        }
+        return out;
+    }
     int activeVoices() const { int c = 0; for (auto& v : voices) c += v.active && (v.gate || v.latched) ? 1 : 0; return c; }
     const MonoTracker& tracker() const { return mono; }
-    bool polyHas (int midi) const { return poly.on (midi); }
+    bool polyHas (int midi) const { for (auto& f : chord.found()) if (f.on && std::lround (f.midi) == midi) return true; return false; }
 
 private:
     struct PendingMidi { bool on = false; int note = 0; float vel = 0.0f; };
@@ -308,10 +338,10 @@ private:
         {
             trackerSettings = s;
             mono.configure (s);
-            poly.setLowest ((int) std::floor (ftom (s.range == MonoTracker::Bass ? s.lowestHz : 62.0f)));
+            chord.setRange (s.range == MonoTracker::Bass ? std::floor (ftom (s.lowestHz)) : (s.range == MonoTracker::Synth ? 28.0f : 36.0f), s.range == MonoTracker::Guitar ? 81.0f : 88.0f);
             configured = true;
         }
-        poly.setSpeed (p.polySpeed, p.character);
+        chord.setStyle (p.polySpeed, p.character);
 
         if (p.mode != prevMode)
         {
@@ -397,7 +427,7 @@ private:
     }
 
     // ---- audio notes ----
-    static constexpr int kMonoKey = 2000, kPolyKeyBase = 1000, kArpKey = 3000;
+    static constexpr int kMonoKey = 2000, kArpKey = 3000, kChordKeyBase = 100000;
 
     void handleMonoEvent (MonoTracker::Event ev, const EngineParams& p)
     {
@@ -425,35 +455,66 @@ private:
 
     void syncPolyNotes (const EngineParams& p)
     {
-        std::array<bool, 128> want {};
-        for (int m = PolyTracker::kLo; m <= PolyTracker::kHi; ++m) want[(size_t) m] = poly.on (m);
+        // what should sound: the chord tracker's notes, led by the fast mono tracker
+        struct Want { int key; float pitch; };
+        std::array<Want, ChordTracker::kMaxNotes + 1> want {};
+        int nw = 0, chordNotes = 0;
         const float mn = mono.currentNote();
-        int monoKey = -1;
-        if (mono.active() && mn > 0.0f)
+        const bool monoOn = mono.active() && mn > 0.0f;
+        bool monoInChord = false;
+        for (const auto& f : chord.found())
         {
-            monoKey = (int) std::lround (mn);
-            if (monoKey >= 0 && monoKey < 128)
-            {
-                // the fast mono note leads; the bank's copies of it and its octave are the same note
-                want[(size_t) monoKey] = true;
-                for (int d : { -1, 1, 12, 19, 24 }) if (monoKey + d >= 0 && monoKey + d < 128 && ! audioOn[(size_t) (monoKey + d)]) want[(size_t) (monoKey + d)] = false;
-            }
+            if (! f.on) continue;
+            ++chordNotes;
+            if (monoOn && std::abs (f.midi - mn) < 0.7f) { monoInChord = true; continue; }   // the same note: mono leads
+            want[(size_t) nw++] = { kChordKeyBase + f.id, f.midi };
         }
-        for (int m = 0; m < 128; ++m)
+        // a single note speaks at once from the mono tracker; once a chord is heard the
+        // mono note stays only if it is one of the chord's notes
+        if (monoOn && (chordNotes < 2 || monoInChord)) want[(size_t) nw++] = { kMonoKey, mn };
+
+        std::array<bool, 128> on {};
+        for (int i = 0; i < nw; ++i) { const int m = (int) std::lround (want[(size_t) i].pitch); if (m >= 0 && m < 128) on[(size_t) m] = true; }
+
+        if (p.mode == ModeArp)
         {
-            if (want[(size_t) m] == audioOn[(size_t) m]) continue;
-            audioOn[(size_t) m] = want[(size_t) m];
-            if (p.mode == ModeArp) { if (want[(size_t) m]) arpPlayed.push_back (m); else removePlayed (m); continue; }
-            if (want[(size_t) m])
+            for (int m = 0; m < 128; ++m)
             {
-                const float pitch = m == monoKey ? mn : (float) m;
-                startVoice (allocate(), kPolyKeyBase + m, pitch, 1.0f, false, false);
+                if (on[(size_t) m] == audioOn[(size_t) m]) continue;
+                audioOn[(size_t) m] = on[(size_t) m];
+                if (on[(size_t) m]) arpPlayed.push_back (m); else removePlayed (m);
             }
-            else
-                for (auto& v : voices) if (v.key == kPolyKeyBase + m && v.gate) endVoice (v);
+            return;
         }
-        if (p.mode == ModePoly && monoKey >= 0)
-            for (auto& v : voices) if (v.key == kPolyKeyBase + monoKey && v.gate) v.target = mn;
+        audioOn = on;
+
+        // match wanted notes to the voices already playing: same note first, then any voice
+        // within a semitone (the mono and chord trackers hand a note over without a restart)
+        std::array<bool, kVoices> used {};
+        std::array<bool, ChordTracker::kMaxNotes + 1> placed {};
+        auto ours = [&] (const Voice& v) { return v.gate && ! v.fromMidi && ! v.arp && ! v.latched && (v.key == kMonoKey || v.key >= kChordKeyBase); };
+        for (int i = 0; i < nw; ++i)
+            for (int k = 0; k < kVoices && ! placed[(size_t) i]; ++k)
+                if (! used[(size_t) k] && ours (voices[(size_t) k]) && voices[(size_t) k].key == want[(size_t) i].key)
+                { used[(size_t) k] = placed[(size_t) i] = true; voices[(size_t) k].target = want[(size_t) i].pitch; }
+        for (int i = 0; i < nw; ++i)
+            for (int k = 0; k < kVoices && ! placed[(size_t) i]; ++k)
+                if (! used[(size_t) k] && ours (voices[(size_t) k]) && std::abs (voices[(size_t) k].target - want[(size_t) i].pitch) < 1.0f)
+                {
+                    used[(size_t) k] = placed[(size_t) i] = true;
+                    voices[(size_t) k].key = want[(size_t) i].key;
+                    voices[(size_t) k].target = want[(size_t) i].pitch;
+                }
+        for (int k = 0; k < kVoices; ++k)
+            if (! used[(size_t) k] && ours (voices[(size_t) k]))
+            {
+                auto& v = voices[(size_t) k];
+                // a false start, gone within 120 ms, is cut short rather than left to ring
+                if ((double) (now - v.age) < 0.12 * sr) v.quickRelease = true;
+                endVoice (v);
+            }
+        for (int i = 0; i < nw; ++i)
+            if (! placed[(size_t) i]) startVoice (allocate(), want[(size_t) i].key, want[(size_t) i].pitch, 1.0f, false, false);
     }
 
     void releaseAudioNotes()
@@ -589,8 +650,8 @@ private:
     float sr = 48000.0f;
     MonoTracker mono;
     MonoTracker::Settings trackerSettings;
-    bool configured = false;
-    PolyTracker poly;
+    bool configured = false, smoothReady = false;
+    ChordTracker chord;
     std::array<Voice, kVoices> voices;
     EchoDelay echo;
     Shifter shiftL, shiftR;
@@ -610,6 +671,6 @@ private:
     double arpCounter = 0.0;
     int arpIndex = 0, chaosCountdown = 0;
     float bend = 0.0f, wheel = 0.0f, followEnv = 0.0f, bypassSm = 0.0f, wetSm = 0.0f, ringMixSm = 0.0f, chaosSm = 0.0f, chaosHz = 200.0f;
-    float voiceGain = 0.34f, tunerSm = 1.0f, attackCoef = 0.0f, dryEnv = 0.0f, dryRingPh = 0.0f;
+    float cutoffSm = 0.55f, mixSm = 0.6f, voiceGain = 0.34f, tunerSm = 1.0f, attackCoef = 0.0f, dryEnv = 0.0f, dryRingPh = 0.0f;
 };
 } // namespace chg

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Changeling VERSION 0.1.0 LANGUAGES C CXX)
+project(Changeling VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -98,7 +98,7 @@ if(CHANGELING_BUILD_PLUGIN)
             JUCE_MODAL_LOOPS_PERMITTED=1
             JUCE_STANDALONE_APPLICATION=1
             JucePlugin_Name="Changeling"
-            JucePlugin_VersionString="0.1.0")
+            JucePlugin_VersionString="0.2.0")
         target_link_libraries(changeling_foot_test PRIVATE
             ChangelingData
             juce::juce_audio_utils
@@ -113,4 +113,6 @@ endif()
 if(CHANGELING_BUILD_TESTS)
     add_executable(changeling_render_test Tests/RenderTest.cpp)
     target_include_directories(changeling_render_test PRIVATE Source/engine)
+    add_executable(changeling_track_bench Tests/TrackBench.cpp)
+    target_include_directories(changeling_track_bench PRIVATE Source/engine Tests)
 endif()

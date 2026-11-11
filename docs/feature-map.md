@@ -34,7 +34,7 @@ Owners report tracking that is no better on bass than the original's: good in mo
 
 | Original | What it does | Changeling |
 | --- | --- | --- |
-| Poly | Polyphonic tracking. Each note you play gets its own synth voice | Up to 6 voices. A bank of semitone filters with a harmonic-sum score and overtone subtraction finds chord notes; the fast mono tracker leads single notes. MIDI notes take free voices |
+| Poly | Polyphonic tracking. Each note you play gets its own synth voice | Up to 6 voices. A spectrum of the audio since the strum, scored by harmonic sum with each found note's overtones removed, finds chord notes and holds them; the fast mono tracker leads single notes. MIDI notes take free voices |
 | Mono | One voice, two oscillators, monophonic tracking. The tightest mode | The new low-latency tracker (see Pitch tracking). Last-note priority from MIDI, with legato glide |
 | Arp | Turns the held chord into a pattern at the tap tempo. Owners report it is fixed at quarter notes of the tap | Same, locked to tap or host tempo. Original pattern and quarter notes by default, with subdivision and pattern on the Deep page (see Questions) |
 | Dry | Synth off. Pitch shifts the dry signal, Sustain compresses it, Modulation modulates the delay | Same. Filter, envelope, ring mod and delay all still work on the dry signal |
@@ -103,7 +103,7 @@ CC 20 to 23 collide with the house footswitch defaults, so this chart lives behi
 The original tracks well on guitar but lags and retriggers below the guitar register. Owners report trouble below A on the E string, octave jumps on low E, and the loudest harmonic being tracked instead of the fundamental. Changeling uses a tracker built for the low end, with a Character control that brings the original's chaos back on purpose.
 
 - **Input chips set the range.** Bass: 28 Hz (drop A on a 5-string) to 1 kHz. Guitar: 70 Hz to 1.5 kHz. Synth/Line: full range.
-- **Short-window lock.** The input is decimated to about 8 kHz and a normalised square difference (McLeod) is computed every 2 ms over a window of a third of each candidate period, so a note is called after about 1.4 cycles: measured 46 ms on low B, 36 ms on open E, under 20 ms across the guitar range. One cycle is the physical floor, and any tracker has to wait for it.
+- **Short-window lock.** The input is decimated to about 8 kHz and a normalised square difference (McLeod) is computed every 2 ms over a window of a third of each candidate period, and a note is called once three readings in a row agree: measured about 45 ms on bass (54 ms on low B) and about 20 ms on guitar, scored against a modelled instrument in `changeling_track_bench`. One cycle is the physical floor, and any tracker has to wait for it.
 - **No octave hopping.** Before trusting a period, 2, 3 and 4 times it are checked too, so the fundamental wins when the second harmonic is louder, which is common on bass with the neck pickup and on a P Bass. While a note holds, the tracker stays with the peak nearest it.
 - **No retriggers on decay.** Hysteresis on level and pitch keeps one note while it fades. A new note needs a fresh pluck or a real pitch change of more than 0.6 semitones.
 - **Character: Tight to Wild** (Deep page). Tight is the new tracker. Wild brings back the original's glitches: octave flips on decay, grabbing the loudest harmonic, retriggers, and slow poly attack. Ring mod reacts to those glitches, so the chaos stays musical.

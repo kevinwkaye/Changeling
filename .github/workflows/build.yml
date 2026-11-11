@@ -28,6 +28,9 @@ jobs:
       - name: Engine render test
         run: build\Release\changeling_render_test.exe
 
+      - name: Tracking bench
+        run: build\Release\changeling_track_bench.exe
+
       - name: Footswitch test
         run: build\changeling_foot_test_artefacts\Release\changeling_foot_test.exe
 
@@ -93,6 +96,9 @@ jobs:
 
       - name: Engine render test
         run: ./build/changeling_render_test
+
+      - name: Tracking bench
+        run: ./build/changeling_track_bench
 
       - name: Footswitch test
         run: ./build/changeling_foot_test_artefacts/Release/changeling_foot_test
