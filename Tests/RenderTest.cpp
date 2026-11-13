@@ -85,6 +85,7 @@ static void trackerSuite()
                 s.range = range == 0 ? MonoTracker::Bass : MonoTracker::Guitar;
                 s.lowestHz = range == 0 ? 29.5f : 62.0f; s.character = 0.0f;
                 t.configure (s); t.prepare (sr);
+                for (int z = 0; z < 34000; ++z) t.push (0.0f);
                 auto x = pluck (mtof ((float) m), sr, 1.4f, weak, 1234u + (uint32_t) m);
                 std::vector<float> sig (2400, 0.0f);
                 sig.insert (sig.end(), x.begin(), x.end());
@@ -110,6 +111,7 @@ static void trackerSuite()
     {
         MonoTracker t; MonoTracker::Settings s; s.range = MonoTracker::Bass; s.lowestHz = 29.5f; s.character = 0.0f;
         t.configure (s); t.prepare (sr);
+                for (int z = 0; z < 34000; ++z) t.push (0.0f);
         auto x = pluck (mtof (28.0f), sr, 0.5f, 1.6f, 99u);
         float lock = -1.0f;
         for (size_t i = 0; i < x.size() && lock < 0.0f; ++i) if (t.push (x[i]) == MonoTracker::Event::NoteOn) lock = (float) i * 1000.0f / sr;
@@ -121,6 +123,7 @@ static void trackerSuite()
     {
         MonoTracker t; MonoTracker::Settings s; s.range = MonoTracker::Bass; s.lowestHz = 29.5f; s.character = 0.0f;
         t.configure (s); t.prepare (sr);
+                for (int z = 0; z < 34000; ++z) t.push (0.0f);
         auto a = pluck (mtof (28.0f), sr, 0.6f, 1.0f, 5u), b = pluck (mtof (28.0f), sr, 0.6f, 1.0f, 6u);
         auto h = pluck (mtof (30.0f), sr, 0.6f, 1.0f, 7u, 0.12f);
         std::vector<float> sig = a; sig.insert (sig.end(), b.begin(), b.end());
@@ -144,6 +147,7 @@ static void trackerSuite()
         {
             MonoTracker t; MonoTracker::Settings s; s.range = MonoTracker::Bass; s.lowestHz = 29.5f; s.character = 1.0f;
             t.configure (s); t.prepare (sr);
+                for (int z = 0; z < 34000; ++z) t.push (0.0f);
             auto x = pluck (mtof ((float) m), sr, 2.5f, 1.6f, 77u + (uint32_t) m);
             for (float v : x) flips += t.push (v) == MonoTracker::Event::NoteChange ? 1 : 0;
         }
@@ -161,6 +165,10 @@ static Render run (ChangelingEngine& e, const EngineParams& p, const std::vector
 {
     Render out; out.l = input; out.r = input;
     EngineParams q = p;
+    {   // the engine only listens for its first 0.6 s
+        std::vector<float> z (256, 0.0f), z2 (256, 0.0f);
+        for (int i = 0; i < 135; ++i) { std::fill (z.begin(), z.end(), 0.0f); std::fill (z2.begin(), z2.end(), 0.0f); e.process (z.data(), z2.data(), 256, q); }
+    }
     for (size_t pos = 0, b = 0; pos < input.size(); pos += (size_t) block, ++b)
     {
         const int n = (int) std::min ((size_t) block, input.size() - pos);

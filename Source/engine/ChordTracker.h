@@ -32,7 +32,7 @@ public:
         mag.assign ((size_t) (kFft / 2 + 1), 0.0f);
         work.assign ((size_t) (kFft / 2 + 1), 0.0f);
         for (auto& n : notes) n = Found();
-        envFast = envSlow = 0.0f; noiseFloor = 1.0e-4f;
+        envFast = envSlow = 0.0f; noiseFloor = 0.004f;
         sinceOnset = 1 << 20; refractory = 0; nextId = 1;
         fastA = std::exp (-1.0f / (0.0007f * sr)); fastR = std::exp (-1.0f / (0.030f * sr));
         slowA = std::exp (-1.0f / (0.040f * sr)); slowR = std::exp (-1.0f / (0.250f * sr));
@@ -40,6 +40,8 @@ public:
 
     void setRange (float lowestMidi, float highestMidi) { lowM = lowestMidi; highM = highestMidi; }
     void setStyle (float quick01, float wild01) { quick = quick01; wild = wild01; }
+    // the noise floor and hum check are shared with the mono tracker, which learns them
+    void setNoise (float floor, bool rejectMains, bool listenOnly) { noiseFloor = floor; noMains = rejectMains; warm = listenOnly; }
 
     // Feed one input sample; returns true when the note list changed
     bool push (float x)
@@ -57,13 +59,10 @@ public:
         if (sinceOnset < (1 << 20)) ++sinceOnset;
         if (refractory > 0) --refractory;
 
-        if (envFast < noiseFloor) noiseFloor += (envFast - noiseFloor) * 0.02f;
-        else if (! anyOn()) noiseFloor *= 1.0f + 0.35f / fsA;
-        noiseFloor = std::max (1.0e-5f, std::min (0.02f, noiseFloor));
         const float gate = std::max (2.0e-4f, noiseFloor * 3.5f);
 
         // a strum or pick: the fast envelope jumps over the slow one
-        if (refractory == 0 && envFast > gate * 1.5f && envFast > envSlow * 1.5f + gate * 0.5f)
+        if (! warm && refractory == 0 && envFast > gate * 1.5f && envFast > envSlow * 1.5f + gate * 0.5f)
         {
             sinceOnset = 0;
             refractory = (int) (0.05f * fsA);
@@ -75,6 +74,7 @@ public:
 
         if (++hop < kHop) return false;
         hop = 0;
+        if (warm) return false;
         return analyse (gate);
     }
 
@@ -115,13 +115,24 @@ private:
         return count;
     }
 
+    static bool isMains (float midi)
+    {
+        const float hz = mtof (midi);
+        for (float m : { 50.0f, 100.0f, 150.0f, 200.0f, 250.0f, 300.0f, 60.0f, 120.0f, 180.0f, 240.0f, 360.0f })
+            if (std::abs (hz - m) < m * 0.01f) return true;
+        return false;
+    }
+
     bool analyse (float gate)
     {
         const bool fresh = sinceOnset < (int) (0.5f * fsA);
         const int minLen = (int) ((0.026f + 0.02f * (1.0f - quick)) * fsA);   // about 36 ms at noon
         if (fresh && sinceOnset < minLen) return false;
-        if (envFast < gate * 0.6f)
+        // the gate opens above the noise floor and closes below it; hum sits under both
+        if (envFast > gate) open = true;
+        if (! open || envFast < gate * 0.6f)
         {
+            if (envFast < gate * 0.6f) open = false;
             // silence for 30 ms ends the chord
             if (++quietHops < 8) return false;
             bool changed = false;
@@ -153,7 +164,8 @@ private:
         int count = 0;
         float first = 0.0f;
         const float step = 0.25f;   // a quarter of a semitone; the exact pitch is refined below
-        for (int n = 0; n < kMaxNotes; ++n)
+        int humFound = 0;
+        for (int n = 0; n < kMaxNotes + 3 && count < kMaxNotes && humFound < 3; ++n)
         {
             float bestS = 0.0f, bestM = -1.0f;
             for (float m = lowM; m <= highM; m += step)
@@ -205,7 +217,10 @@ private:
                     refined = nv % 2 ? votes[nv / 2] : 0.5f * (votes[nv / 2 - 1] + votes[nv / 2]);
                 }
             }
-            picks[(size_t) count] = refined; strength[(size_t) count] = bestS; ++count;
+            // mains hum, not a string: take it out of the spectrum below but don't play it
+            const bool humNote = noMains && isMains (refined);
+            if (! humNote) { picks[(size_t) count] = refined; strength[(size_t) count] = bestS; ++count; }
+            else ++humFound;
 
             // take its overtones out, smoothed across neighbouring harmonics so a note sharing
             // overtones with this one (an octave above) keeps what's left for it
@@ -286,7 +301,7 @@ private:
     float sr = 48000.0f, fsA = 8000.0f, lowM = 40.0f, highM = 88.0f, quick = 0.5f, wild = 0.0f;
     int decim = 6, counter = 0, hop = 0, pos = 0, sinceOnset = 1 << 20, refractory = 0, nextId = 1;
     long long written = 0;
-    bool decided = false;
+    bool decided = false, noMains = true, warm = true, open = false;
     Biquad aa[2], dc;
     std::vector<float> buf, spec, mag, work;
     std::array<Found, kMaxNotes> notes {};
@@ -294,6 +309,6 @@ private:
     std::array<float, kMaxNotes> pending {};
     std::array<int, kMaxNotes> pendCount {};
     int quietHops = 0;
-    float envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, noiseFloor = 1.0e-4f, peakSinceOnset = 0.0f;
+    float envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, noiseFloor = 0.004f, peakSinceOnset = 0.0f;
 };
 } // namespace chg

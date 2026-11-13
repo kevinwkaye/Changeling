@@ -54,6 +54,7 @@ The original lags and retriggers below the guitar register. Changeling's tracker
 - A note is called once three readings in a row agree, so the first pitch you hear is the right one. On the test phrases that takes about 20 ms on guitar and about 45 ms on bass (54 ms on low B). One cycle of the note is the physical floor for any tracker.
 - Bends, slides, vibrato and hammer-ons are followed continuously, without retriggering.
 - The gate follows your noise floor, so quiet playing and a turned-down volume knob track the same as loud playing.
+- Hum and hiss never play notes. Changeling listens for its first 0.6 seconds after loading, learns any level that holds dead steady as background (a string always fades, hum never does), and remembers it while you roll your volume down and back up. If your rig is very noisy, turn Sensitivity down on the Deep page.
 - The octave guard keeps the real note when the second harmonic is louder than the fundamental, which happens a lot on bass.
 - A fading note stays one note, with no retriggers and no octave flips.
 - **Character** on the Deep page runs from Tight to Wild. Wild brings back the original's glitches: octave flips on the decay, grabbing harmonics, nervous retriggers. Holding footswitch C turns it fully wild while ring chaos plays.

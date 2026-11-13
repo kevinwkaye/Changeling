@@ -46,7 +46,8 @@ public:
         dcBlock.highpass (18.0f, 0.707f, sr);
         buf.fill (0.0f);
         pos = 0; written = 0; counter = 0; hopCounter = 0;
-        envFast = envSlow = 0.0f; noiseFloor = 1.0e-4f; gate = 2.0e-4f;
+        envFast = envSlow = 0.0f; noiseFloor = 0.004f; gate = 0.014f;   // assume a noisy input until it proves quiet
+        steadyRef = 0.0f; steadyHops = 0; power = 0.0f; levelSm = 0.0f; bgRef = 0.0f; bgHops = 0; humMemory = 0.0f; warmup = (int) (0.6f * fsA);
         fastA = std::exp (-1.0f / (0.0007f * sr)); fastR = std::exp (-1.0f / (0.030f * sr));
         slowA = std::exp (-1.0f / (0.040f * sr)); slowR = std::exp (-1.0f / (0.250f * sr));
         state = Idle; note = -1.0f; shown = -1.0f; clarity = 0.0f;
@@ -90,11 +91,25 @@ public:
         if (refractory > 0) --refractory;
 
         // the noise floor: drops quickly, creeps up slowly, and only between notes
+        // smooth level (120 ms): steady for hum, falling for a plucked string
+        power += (y * y - power) * (1.0f / (0.12f * fsA));
+        const float lvl = std::sqrt (power);
+        levelSm = lvl;
+        // the first 0.6 s after loading only listens, so hum that's already there is never a note
+        if (warmup > 0)
+        {
+            --warmup;
+            noiseFloor += (envFast - noiseFloor) * 0.01f;
+            noiseFloor = std::max (1.0e-5f, std::min (0.05f, noiseFloor));
+            gate = noiseFloor * 3.5f;
+            return Event::None;
+        }
+        humMemory *= 1.0f - 0.17f / fsA;   // remembered hum fades by 1.5 dB a second
         if (envFast < noiseFloor) noiseFloor += (envFast - noiseFloor) * 0.02f;
         else if (state == Idle) noiseFloor *= 1.0f + 0.35f / fsA;   // about +3 dB per second
-        noiseFloor = std::max (1.0e-5f, std::min (0.02f, noiseFloor));
+        noiseFloor = std::max (1.0e-5f, std::min (0.05f, noiseFloor));
         const float sens = 0.25f * std::pow (16.0f, 1.0f - settings.sensitivity);   // 0.25x .. 4x, 1x at noon
-        gate = std::max (2.0e-4f * sens, noiseFloor * 3.5f * sens);
+        gate = std::max (2.0e-4f * sens, std::max (noiseFloor * 3.5f, humMemory * 2.0f) * sens);
 
         detectOnset();
         if (++hopCounter < kHop) return Event::None;
@@ -123,6 +138,32 @@ private:
     enum State { Idle, Seeking, Active };
 
     float wild() const { return clamp01 (std::max (settings.character, boost)); }
+
+    // Mains hum is perfectly periodic, so it reads as a very clear note. It sits at 50 or
+    // 60 Hz and their multiples, which standard-tuned notes miss by 2% or more.
+    static bool mainsPitch (float midi)
+    {
+        const float hz = mtof (midi);
+        for (float m : { 50.0f, 100.0f, 150.0f, 200.0f, 250.0f, 300.0f, 60.0f, 120.0f, 180.0f, 240.0f, 360.0f })
+            if (std::abs (hz - m) < m * 0.01f) return true;
+        return false;
+    }
+    // While a note sounds: the pitch has settled on the mains and the level is dead steady,
+    // or the note has faded and the mains is what's left.
+    bool hummingAlong (float est)
+    {
+        if (settings.range == Synth) return false;
+        const bool onMains = (est > 0.0f && mainsPitch (est)) || mainsPitch (note);
+        if (! onMains) { steadyHops = 0; steadyRef = levelSm; return false; }
+        if (est > 0.0f && mainsPitch (est) && ! mainsPitch (note) && envFast < 0.3f * notePeak) return true;
+        if (levelSm > steadyRef * 0.84f && levelSm < steadyRef * 1.19f) ++steadyHops; else { steadyHops = 0; steadyRef = levelSm; }
+        return mainsPitch (note) && (float) steadyHops * (float) kHop > 0.35f * fsA;
+    }
+  public:
+    float floorLevel() const { return std::max (noiseFloor, humMemory * 0.6f); }
+    bool warmingUp() const { return warmup > 0; }
+    static bool isMainsPitch (float midi) { return mainsPitch (midi); }
+  private:
 
     void detectOnset()
     {
@@ -269,6 +310,14 @@ private:
 
     Event analyse()
     {
+        // Background is whatever holds dead steady: a string always fades, hum and hiss never
+        // do. Half a second within a third of a dB and the level is learned as the noise floor.
+        // Only while nothing is being played: evenly repeated notes can look steady too.
+        const bool listening = state == Idle || (state == Seeking && written - seekStart > (long long) (0.3f * fsA)) || (state == Active && mainsPitch (note));
+        if (listening && levelSm > bgRef * 0.96f && levelSm < bgRef * 1.04f) ++bgHops; else { bgRef = levelSm; bgHops = 0; }
+        if (settings.range != Synth && (float) bgHops * (float) kHop > 0.45f * fsA)
+            humMemory = std::min (0.1f, std::max (humMemory, envFast));   // its peaks, so the gate sits clear above it
+
         const float w = wild();
         const bool aboveGate = envFast > gate;
         const int full = (int) std::min<long long> (written, kBuf - 1);
@@ -323,6 +372,12 @@ private:
             {
                 state = Idle; note = -1.0f; shown = -1.0f; ev = Event::NoteOff;
             }
+            else if (hummingAlong (est))
+            {
+                // the string has stopped and what's left is mains hum: end the note and learn the level
+                humMemory = std::min (0.1f, std::max (humMemory, envFast));
+                state = Idle; note = -1.0f; shown = -1.0f; ev = Event::NoteOff;
+            }
             else if (est > 0.0f && clar > 0.72f)
             {
                 const float d = est - note;
@@ -369,7 +424,8 @@ private:
     int pos = 0;
     long long written = 0, seekStart = 0;
     int tauMin = 6, tauMax = 300;
-    float noiseFloor = 1.0e-4f, envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, gate = 0.002f;
+    float steadyRef = 0.0f, power = 0.0f, levelSm = 0.0f, bgRef = 0.0f, humMemory = 0.0f; int steadyHops = 0, bgHops = 0, warmup = 0;
+    float noiseFloor = 0.004f, envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, gate = 0.002f;
     int sinceOnset = 1 << 20, refractory = 0, belowGate = 0, changeVotes = 0, octaveVotes = 0, flipHops = 0;
     bool onsetPending = false;
     State state = Idle;

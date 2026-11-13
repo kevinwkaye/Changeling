@@ -131,6 +131,7 @@ public:
             chaosSm += ((p.chaos ? 1.0f : 0.0f) - chaosSm) * 0.0005f;
             mono.wildBoost (chaosSm);
             const auto ev = mono.push (in);
+            chord.setNoise (mono.floorLevel(), p.input != InputSynth, mono.warmingUp());
             const bool polyTick = (p.mode == ModePoly || p.mode == ModeArp) && chord.push (in);   // chords are only listened for when needed
             const float lvl = mono.level();
             followEnv += (std::min (1.0f, lvl * 6.0f) - followEnv) * (lvl * 6.0f > followEnv ? 0.02f : 0.0006f);
