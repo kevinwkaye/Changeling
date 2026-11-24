@@ -241,18 +241,29 @@ int main (int argc, char** argv)
             pr.proc.loadPreset (slot);
             pr.pump (20);
             float peak = 0.0f; bool finite = true;
+            // Dry mode switches the synth off and treats your own signal, so it gets a guitar
+            // note instead of a keyboard chord
+            const bool dryMode = std::lround (pr.proc.apvts.getParameter (mode)->convertFrom0to1 (pr.proc.apvts.getParameter (mode)->getValue())) == 3;
             for (int k = 0; k < 150; ++k)
             {
                 MidiBuffer m;
-                if (k == 1) for (int n : { 48, 55, 60 }) m.addEvent (MidiMessage::noteOn (1, n, (uint8) 100), 0);
-                pr.block (m);
+                if (k == 1 && ! dryMode) for (int n : { 48, 55, 60 }) m.addEvent (MidiMessage::noteOn (1, n, (uint8) 100), 0);
+                if (dryMode)
+                {
+                    pr.buffer.clear();
+                    for (int ch = 0; ch < pr.buffer.getNumChannels(); ++ch)
+                        for (int i = 0; i < pr.buffer.getNumSamples(); ++i)
+                            pr.buffer.setSample (ch, i, 0.2f * std::sin (6.2831853f * 220.0f * (float) (k * 256 + i) / 48000.0f));
+                    pr.proc.processBlock (pr.buffer, m);
+                }
+                else pr.block (m);
                 for (int i = 0; i < 256; ++i) { const float v = pr.buffer.getSample (0, i); finite = finite && std::isfinite (v); peak = jmax (peak, std::abs (v)); }
             }
             if (finite && peak > 0.02f && peak <= 1.0f) ++sounding;
             else std::printf ("       slot %d: peak %.3f\n", slot + 1, peak);
         }
         check (named == 12, "twelve presets are loaded and named");
-        check (sounding == 12, String (sounding) + " of 12 presets sound from a keyboard chord, under full scale");
+        check (sounding == 12, String (sounding) + " of 12 presets sound from a keyboard chord (Dry: a guitar note), under full scale");
         Rig pr;
         check (! pr.proc.hasPreset (12) && ! pr.proc.hasPreset (15), "the blue bank is empty");
     }
