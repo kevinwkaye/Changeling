@@ -88,8 +88,20 @@ public:
         const float relCoef = std::exp (-1.0f / (relS * sr));
         const float sustainCoef = p.sustain > 0.97f ? 1.0f : std::exp (-1.0f / (0.12f * std::pow (80.0f, p.sustain) * sr));
         const float quickCoef = std::exp (-1.0f / (0.015f * sr));
-        const float fdecS = 0.1f + 1.1f * p.sustain;
+        // Filter Env works as on the Enzo (0.2.1). Triggered: left of noon is a fast attack and
+        // the knob sets the decay (20 ms to 0.8 s at noon); right of noon the notes swell in, the
+        // knob setting the attack (up to 3 s), and hold. Follow: noon is still, right opens
+        // the filter as you dig in, left closes it.
+        const float eKnob = p.env;
+        const bool swell = eKnob > 0.5f;
+        const float swellU = swell ? (eKnob - 0.5f) * 2.0f : 0.0f;
+        const float fdecS = swell ? 1.0e6f : 0.02f * std::pow (40.0f, eKnob * 2.0f);
         const float fdecCoef = std::exp (-1.0f / (fdecS * sr));
+        const float fattS = swell ? 0.004f + 3.0f * swellU * swellU : 0.001f;
+        const float fattStep = 1.0f - std::exp (-1.0f / (fattS * sr));
+        const float swellAmpCoef = std::exp (-1.0f / ((0.002f + 2.0f * swellU * swellU) * sr));
+        const float followDepth = (eKnob - 0.5f) * 2.0f;   // -1 closes, +1 opens
+        constexpr float kEnvOct = 3.5f;
         const float glideS = 0.002f + p.glide * p.glide * 2.0f;
         const float glideCoef = std::exp (-1.0f / (glideS * sr));
 
@@ -103,8 +115,8 @@ public:
         const bool dry = p.mode == ModeDry;
         const bool useAudio = p.source != SourceMidi && ! dry;
 
-        const float ringTarget = std::max (p.ring > 0.02f ? 1.0f : p.ring / 0.02f, chaosSm);
-        const float fixedRingHz = 20.0f * std::pow (150.0f, p.ring);
+        const float ringTarget = std::max (p.ring > kRingOff ? 1.0f : 0.0f, chaosSm);
+        const float fixedRingHz = ringHz (p.ring);
         static const float ratios[11] = { 0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f };
         const float followRatio = ratios[std::max (0, std::min (10, (int) (p.ring * 10.99f)))];
         const float quarter = 60.0f / std::max (20.0f, p.bpm);
@@ -199,19 +211,20 @@ public:
                     ampTarget = v.hold;
                 }
                 const float vel = p.velocityMode == 1 ? v.velocity : (p.velocityMode == 2 ? 0.6f + 0.4f * v.velocity : 1.0f);
-                if (ampTarget > v.amp) v.amp = ampTarget + attackCoef * (v.amp - ampTarget);
+                if (ampTarget > v.amp) v.amp = ampTarget + (swell && p.envType == 0 && ! v.arp ? swellAmpCoef : attackCoef) * (v.amp - ampTarget);
                 else v.amp = ampTarget + (v.gate || v.latched || v.sustained ? 0.9995f : (v.quickRelease ? quickCoef : relCoef)) * (v.amp - ampTarget);
                 if (! v.gate && ! v.latched && ! v.sustained && v.amp < 1.0e-4f) { v.active = false; continue; }
 
                 // filter envelope: triggered, or following your playing
                 if (p.envType == 0 || v.fromMidi)
                 {
-                    if (v.fenvAttack) { v.fenv += (1.05f - v.fenv) * 0.02f; if (v.fenv >= 1.0f) { v.fenv = 1.0f; v.fenvAttack = false; } }
+                    if (v.fenvAttack) { v.fenv += (1.05f - v.fenv) * fattStep; if (v.fenv >= 1.0f) { v.fenv = 1.0f; v.fenvAttack = false; } }
                     else v.fenv *= fdecCoef;
                 }
                 else v.fenv = followEnv;
                 const float envScale = (p.velocityMode == 2 && v.fromMidi) ? 0.3f + 0.7f * v.velocity : 1.0f;
-                const float fc = baseCut * std::pow (2.0f, p.env * 6.0f * v.fenv * envScale);
+                const float envOct = (p.envType == 0 || v.fromMidi) ? kEnvOct * v.fenv : kEnvOct * 1.2f * followDepth * v.fenv;
+                const float fc = std::min (sr * 0.45f, baseCut * std::pow (2.0f, envOct * envScale));
                 float s = v.filter.process (osc, p.filterType, fc, p.bandwidth, sr);
 
                 if (ringMixSm > 0.001f)
@@ -232,7 +245,7 @@ public:
                 if (dryEnvKick) { dryEnv = 1.0f; dryEnvKick = false; }
                 dryEnv *= fdecCoef;
                 const float denv = p.envType == 0 ? dryEnv : followEnv;
-                const float fc = baseCut * std::pow (2.0f, p.env * 6.0f * denv);
+                const float fc = std::min (sr * 0.45f, baseCut * std::pow (2.0f, p.envType == 0 ? kEnvOct * denv : kEnvOct * 1.2f * followDepth * denv));
                 float a = compL.process (shiftL.process (inL, p.pitch), p.sustain);
                 float b = compR.process (shiftR.process (inR, p.pitch), p.sustain);
                 a = dryFilterL.process (a, p.filterType, fc, p.bandwidth, sr);
@@ -285,11 +298,11 @@ public:
         uiEstimate.store (mono.lastEstimate(), std::memory_order_relaxed);
         uiClarity.store (mono.currentClarity(), std::memory_order_relaxed);
         uiLockMs.store (mono.lockMs(), std::memory_order_relaxed);
-        uiChaos.store (std::max (chaosSm, p.ring > 0.02f ? p.ring * 0.6f : 0.0f), std::memory_order_relaxed);
+        uiChaos.store (std::max (chaosSm, p.ring > kRingOff ? p.ring * 0.6f : 0.0f), std::memory_order_relaxed);
         float fenvMax = 0.0f;
         for (auto& v : voices) if (v.active) fenvMax = std::max (fenvMax, v.fenv);
         if (dry) fenvMax = p.envType == 0 ? dryEnv : followEnv;
-        uiFilterEnv.store (fenvMax * p.env, std::memory_order_relaxed);
+        uiFilterEnv.store (fenvMax * (p.envType == 0 ? 1.0f : std::abs (followDepth)), std::memory_order_relaxed);
         uiLatched.store (anyLatched(), std::memory_order_relaxed);
     }
 
@@ -476,6 +489,10 @@ private:
 
         std::array<bool, 128> on {};
         for (int i = 0; i < nw; ++i) { const int m = (int) std::lround (want[(size_t) i].pitch); if (m >= 0 && m < 128) on[(size_t) m] = true; }
+        // how loud each note is, for the arp's Original pattern (loudest first, as on the pedal)
+        for (const auto& f : chord.found())
+            if (f.on) { const int m = (int) std::lround (f.midi); if (m >= 0 && m < 128) arpLoud[(size_t) m] = f.strength; }
+        if (monoOn) { const int m = (int) std::lround (mn); if (m >= 0 && m < 128) arpLoud[(size_t) m] = std::max (arpLoud[(size_t) m], 1.0e3f); }
 
         if (p.mode == ModeArp)
         {
@@ -612,6 +629,32 @@ private:
 
         std::array<int, 24> sorted = pool;
         std::sort (sorted.begin(), sorted.begin() + count);
+        // Original, as on the Enzo: the notes in order of loudness, and a single note played
+        // alone becomes a pattern of its harmonics (root, octave, octave and a fifth, two octaves)
+        if (p.arpPattern == 0)
+        {
+            std::array<int, 24> byLoud = pool;
+            std::stable_sort (byLoud.begin(), byLoud.begin() + count, [&] (int a, int b)
+            {
+                const float la = midiHeld[(size_t) (a & 127)] ? 2.0e3f + midiVel[(size_t) (a & 127)] : arpLoud[(size_t) (a & 127)];
+                const float lb = midiHeld[(size_t) (b & 127)] ? 2.0e3f + midiVel[(size_t) (b & 127)] : arpLoud[(size_t) (b & 127)];
+                return la > lb;
+            });
+            std::array<int, 24> seq {};
+            int n = 0;
+            if (count == 1) { for (int h : { 0, 12, 19, 24 }) seq[(size_t) n++] = byLoud[0] + h; }
+            else for (int i = 0; i < count; ++i) seq[(size_t) n++] = byLoud[(size_t) i];
+            const int oct = std::max (1, std::min (3, p.arpOctaves));
+            const int len = n * oct;
+            const int k = arpIndex % len;
+            int note = seq[(size_t) (k % n)] + 12 * (k / n);
+            while (note > 108) note -= 12;
+            ++arpIndex;
+            uiArpStep.store (arpIndex - 1, std::memory_order_relaxed);
+            uiArpSteps.fetch_add (1, std::memory_order_relaxed);
+            playArpNote (p, note, stepSamples);
+            return;
+        }
         const int oct = std::max (1, std::min (3, p.arpOctaves));
         const int len = count * oct;
         auto noteAt = [&] (int i, const std::array<int, 24>& src) { return src[(size_t) (i % count)] + 12 * (i / count); };
@@ -631,6 +674,11 @@ private:
         uiArpStep.store (arpIndex - 1, std::memory_order_relaxed);
         uiArpSteps.fetch_add (1, std::memory_order_relaxed);
 
+        playArpNote (p, note, stepSamples);
+    }
+
+    void playArpNote (const EngineParams& p, int note, double stepSamples)
+    {
         // one voice per step, round robin over the free ones
         int idx = -1;
         for (int k = 0; k < kVoices && idx < 0; ++k)
@@ -661,7 +709,7 @@ private:
     Rng rng;
 
     std::array<bool, 128> audioOn {}, midiHeld {};
-    std::array<float, 128> midiVel {};
+    std::array<float, 128> midiVel {}, arpLoud {};
     std::vector<int> midiOrder, arpPlayed;
     std::array<PendingMidi, kPending> pendingMidi {};
     unsigned pendingCount = 0, pendingRead = 0;

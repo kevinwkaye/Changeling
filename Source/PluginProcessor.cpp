@@ -673,8 +673,9 @@ void ChangelingProcessor::applySnapshot (const ValueTree& t)
 
 void ChangelingProcessor::makeFactoryPresets()
 {
-    // Twelve starting sounds, each matched by measurement (waveform, brightness, pitch range,
-    // note rate) to a passage in the pedal demos. The blue bank is yours.
+    // Twelve starting sounds: the demo's poly swell, following wah, slow freeze, harmonic arp,
+    // glide lead and dry octave, with the earlier basses, organ, arp and ring noise. The blue
+    // bank is yours.
     auto make = [&] (int slot, const char* name, const std::map<String, float>& values)
     {
         ValueTree t ("Snapshot");
@@ -689,34 +690,38 @@ void ChangelingProcessor::makeFactoryPresets()
     using namespace ParamIDs;
     const char* tempo = ParamIDs::bpm;
 
-    // ---- red: mono basses and low lines ----
+    // ---- red: mono basses and leads ----
     make (0, "LOW SAW", { { mode, 1 }, { wave, 0 }, { cutoff, 0.47f }, { env, 0.35f }, { bandwidth, 0.3f }, { sustain, 0.85f },
                           { glide, 0.2f }, { mod, 0.15f }, { mix, 0.9f }, { delayLevel, 0.0f } });
     make (1, "HOLLOW SQUARE", { { mode, 1 }, { wave, 1 }, { cutoff, 0.74f }, { env, 0.3f }, { bandwidth, 0.25f }, { sustain, 0.9f },
                                 { glide, 0.38f }, { mod, 0.1f }, { mix, 0.85f }, { delayLevel, 0.15f }, { feedback, 0.3f } });
     make (2, "SUB OCTAVE", { { mode, 1 }, { wave, 0 }, { cutoff, 0.33f }, { env, 0.2f }, { bandwidth, 0.2f }, { sustain, 0.9f },
                              { glide, 0.12f }, { mod, 0.05f }, { mix, 0.9f }, { delayLevel, 0.0f }, { osc2Interval, 1 }, { osc2Level, 0.8f } });
-    make (3, "ACID SWEEP", { { mode, 1 }, { wave, 0 }, { cutoff, 0.3f }, { env, 0.85f }, { bandwidth, 0.78f }, { sustain, 0.6f },
-                             { glide, 0.25f }, { mod, 0.08f }, { mix, 0.9f }, { delayLevel, 0.2f }, { feedback, 0.35f } });
+    // the demo's mono close: portamento sweeping between notes
+    make (3, "GLIDE LEAD", { { mode, 1 }, { wave, 1 }, { cutoff, 0.55f }, { env, 0.4f }, { bandwidth, 0.3f }, { sustain, 0.95f },
+                             { glide, 0.55f }, { mod, 0.1f }, { mix, 1.0f }, { delayLevel, 0.25f }, { feedback, 0.35f } });
 
-    // ---- yellow: chords and pads ----
-    make (4, "GLASS STABS", { { mode, 0 }, { wave, 1 }, { filterType, 3 }, { cutoff, 0.42f }, { env, 0.25f }, { bandwidth, 0.2f },
-                              { sustain, 0.8f }, { mod, 0.1f }, { mix, 0.75f }, { delayLevel, 0.2f }, { feedback, 0.3f } });
-    make (5, "BRIGHT WASH", { { mode, 0 }, { wave, 0 }, { cutoff, 0.7f }, { env, 0.2f }, { bandwidth, 0.25f }, { sustain, 1.0f },
-                              { mod, 0.45f }, { mix, 0.7f }, { delayLevel, 0.5f }, { feedback, 0.55f } });
-    make (6, "SOFT ORGAN", { { mode, 0 }, { wave, 1 }, { cutoff, 0.5f }, { env, 0.1f }, { bandwidth, 0.15f }, { sustain, 0.95f },
+    // ---- yellow: chords and pads, as in the demo's poly scene ----
+    make (4, "POLY SWELL", { { mode, 0 }, { wave, 0 }, { envType, 0 }, { cutoff, 0.45f }, { env, 0.72f }, { bandwidth, 0.3f },
+                             { sustain, 0.85f }, { mod, 0.3f }, { mix, 1.0f }, { delayLevel, 0.15f }, { feedback, 0.3f } });
+    make (5, "FOLLOW WAH", { { mode, 0 }, { wave, 0 }, { envType, 1 }, { cutoff, 0.25f }, { env, 0.85f }, { bandwidth, 0.6f },
+                             { sustain, 0.6f }, { mod, 0.2f }, { mix, 0.9f }, { delayLevel, 0.1f } });
+    // sustain at max and a very slow ring mod: a textured freeze that swells
+    make (6, "SLOW FREEZE", { { mode, 0 }, { wave, 0 }, { cutoff, 0.5f }, { env, 0.8f }, { bandwidth, 0.25f }, { sustain, 1.0f },
+                              { ring, 0.087f }, { mod, 0.35f }, { mix, 1.0f }, { delayLevel, 0.35f }, { feedback, 0.5f } });
+    make (7, "SOFT ORGAN", { { mode, 0 }, { wave, 1 }, { cutoff, 0.5f }, { env, 0.1f }, { bandwidth, 0.15f }, { sustain, 0.95f },
                              { mod, 0.05f }, { mix, 0.75f }, { delayLevel, 0.1f }, { osc2Interval, 3 }, { osc2Level, 0.4f } });
-    make (7, "TOUCH BRASS", { { mode, 0 }, { wave, 0 }, { envType, 1 }, { cutoff, 0.48f }, { env, 0.6f }, { bandwidth, 0.4f },
-                              { sustain, 0.7f }, { mod, 0.2f }, { mix, 0.75f }, { delayLevel, 0.15f } });
 
-    // ---- green: arps, leads and trouble ----
-    make (8, "SPARKLE ARP", { { mode, 2 }, { wave, 1 }, { tempo, 246.0f }, { cutoff, 0.6f }, { env, 0.5f }, { bandwidth, 0.35f },
+    // ---- green: arps, dry and trouble ----
+    make (8, "SPARKLE ARP", { { mode, 2 }, { wave, 1 }, { tempo, 246.0f }, { cutoff, 0.6f }, { env, 0.3f }, { bandwidth, 0.35f },
                               { sustain, 0.3f }, { arpGate, 0.5f }, { arpOctaves, 1 }, { mix, 0.7f }, { delayLevel, 0.4f }, { feedback, 0.45f } });
-    make (9, "HIGH PLUCKS", { { mode, 1 }, { wave, 1 }, { pitch, 12 }, { cutoff, 0.55f }, { env, 0.5f }, { bandwidth, 0.3f },
-                              { sustain, 0.1f }, { glide, 0.0f }, { mod, 0.0f }, { mix, 0.7f }, { delayLevel, 0.35f }, { feedback, 0.4f } });
-    make (10, "GLIDE LEAD", { { mode, 1 }, { wave, 1 }, { pitch, 12 }, { filterType, 3 }, { cutoff, 0.5f }, { env, 0.1f }, { bandwidth, 0.1f },
-                              { sustain, 0.95f }, { glide, 0.7f }, { mod, 0.0f }, { mix, 0.8f }, { delayLevel, 0.3f }, { feedback, 0.4f } });
-    make (11, "RING NOISE", { { mode, 0 }, { wave, 0 }, { ring, 0.55f }, { character, 0.6f }, { cutoff, 0.8f }, { env, 0.3f }, { bandwidth, 0.5f },
+    // one note becomes root, octave, octave and fifth, two octaves, at sixteenths
+    make (9, "HARMONIC ARP", { { mode, 2 }, { wave, 0 }, { tempo, 90.0f }, { arpStep, 3 }, { arpPattern, 0 }, { cutoff, 0.55f }, { env, 0.25f },
+                               { bandwidth, 0.35f }, { sustain, 0.5f }, { arpGate, 0.55f }, { mix, 0.85f }, { delayLevel, 0.3f }, { feedback, 0.35f } });
+    // Dry mode: your own guitar an octave down, Sustain as a compressor
+    make (10, "DRY OCTAVE", { { mode, 3 }, { pitch, -12 }, { cutoff, 0.7f }, { env, 0.3f }, { bandwidth, 0.3f }, { sustain, 0.5f },
+                              { mix, 0.6f }, { delayLevel, 0.3f }, { feedback, 0.35f } });
+    make (11, "RING NOISE", { { mode, 0 }, { wave, 0 }, { ring, 0.75f }, { character, 0.6f }, { cutoff, 0.8f }, { env, 0.3f }, { bandwidth, 0.5f },
                               { sustain, 0.7f }, { mod, 0.25f }, { mix, 0.7f }, { delayLevel, 0.4f }, { feedback, 0.6f } });
 }
 
@@ -795,7 +800,14 @@ void ChangelingProcessor::setStateInformation (const void* data, int sizeInBytes
         for (int i = 0; i < kPresets && i < presets.getNumChildren(); ++i)
         {
             const auto slot = presets.getChild (i);
-            if (slot.getNumChildren() > 0) slots[(size_t) i] = slot.getChild (0).createCopy();   // an empty saved slot keeps its factory sound
+            if (slot.getNumChildren() == 0) continue;   // an empty saved slot keeps its factory sound
+            // a factory sound saved by an older version gives way to this version's factory
+            // sound in that slot; anything you saved yourself stays (0.2.1)
+            const auto saved = slot.getChild (0);
+            static const StringArray oldFactory { "LOW SAW", "HOLLOW SQUARE", "SUB OCTAVE", "ACID SWEEP", "GLASS STABS", "BRIGHT WASH",
+                                                  "SOFT ORGAN", "TOUCH BRASS", "SPARKLE ARP", "HIGH PLUCKS", "GLIDE LEAD", "RING NOISE" };
+            if (i < 12 && oldFactory.contains (saved.getProperty ("presetName").toString()) && ! (bool) saved.getProperty ("edited", false)) continue;
+            slots[(size_t) i] = saved.createCopy();
         }
         tree.removeChild (presets, nullptr);
     }

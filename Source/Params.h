@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <vector>
+#include "engine/DspUtil.h"
 
 namespace ParamIDs
 {
@@ -117,7 +118,12 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     knob (ParamIDs::mix, "Mix", 0.6f);
     knob (ParamIDs::delayLevel, "Delay Level", 0.3f, [] (float v, int) { return v < 0.02f ? String ("Off") : (v < 0.98f ? "Min " + String (roundToInt (v * 100.0f)) + "%" : String ("Mid")); });
     knob (ParamIDs::sustain, "Sustain", 0.75f);
-    knob (ParamIDs::ring, "Ring Mod", 0.0f, [] (float v, int) { return v < 0.02f ? String ("Off") : String (roundToInt (20.0f * std::pow (150.0f, v))) + " Hz"; });
+    knob (ParamIDs::ring, "Ring Mod", 0.0f, [] (float v, int)
+    {
+        if (v <= chg::kRingOff) return String ("Off");
+        const float hz = chg::ringHz (v);
+        return hz < 10.0f ? String (hz, 1) + " Hz" : String (roundToInt (hz)) + " Hz";
+    });
     knob (ParamIDs::env, "Filter Env", 0.5f);
     knob (ParamIDs::bandwidth, "Bandwidth", 0.3f, [] (float v, int) { return v < 0.33f ? String ("Wide") : (v < 0.66f ? String ("Medium") : String ("Peaky")); });
     knob (ParamIDs::mod, "Modulation", 0.2f, [] (float v, int) { return v < 0.01f ? String ("Unison") : String (roundToInt (v * 50.0f)) + " cents"; });

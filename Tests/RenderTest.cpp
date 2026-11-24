@@ -362,11 +362,91 @@ static void engineSuite (const char* wavDir)
     }
 }
 
+// ------------------------------------------------------------------------------------------
+// 3. Played on a real guitar (0.2.1): a guitar a third of a semitone flat, single plucks and
+//    the Enzo's harmonic arp
+// ------------------------------------------------------------------------------------------
+static void realGuitarSuite()
+{
+    std::printf ("Real guitar\n");
+    const float sr = 48000.0f;
+    // a flat guitar: F#3 lands 0.8% off 180 Hz (three times 60 Hz mains) as it fades
+    std::vector<float> sig ((size_t) (0.8f * sr), 0.0f);
+    int k = 0;
+    for (float m : { 54.0f, 55.0f, 50.0f, 54.0f, 57.0f })
+    {
+        // a pick: a 2 ms rise, then six partials fading, as a pickup hears it
+        std::vector<float> x ((size_t) (1.6f * sr));
+        const float f = mtof (m - 0.33f);
+        for (size_t i = 0; i < x.size(); ++i)
+        {
+            const float t = (float) i / sr;
+            float v = 0.0f;
+            for (int h = 1; h <= 6; ++h) v += std::sin (kTwoPi * f * (float) h * t) / (float) h;
+            x[i] = 0.08f * v * std::exp (-t / 0.9f) * std::min (1.0f, t * 500.0f);
+        }
+        ++k;
+        sig.insert (sig.end(), x.begin(), x.end());
+    }
+    // the rig's own noise and 50 Hz hum, as on the recording (about -67 dB and -71 dB)
+    {
+        Rng nz; nz.s = 4242u;
+        for (size_t i = 0; i < sig.size(); ++i)
+            sig[i] += 0.0006f * nz.bi() + 0.0004f * std::sin (kTwoPi * 50.0f * (float) i / sr);
+    }
+    {
+        ChangelingEngine e; e.prepare (sr);
+        EngineParams p; p.mode = ModeMono; p.input = InputGuitar; p.mix = 1.0f;
+        float worstFloor = 0.0f; int onsets0 = 0;
+        std::vector<float> L (256), R (256);
+        for (size_t i = 0; i + 256 <= sig.size(); i += 256)
+        {
+            for (int j = 0; j < 256; ++j) L[(size_t) j] = R[(size_t) j] = sig[i + (size_t) j];
+            e.process (L.data(), R.data(), 256, p);
+            if (i > (size_t) (0.8f * sr)) worstFloor = std::max (worstFloor, e.tracker().floorLevel());
+            if (i == (size_t) (0.8f * sr) / 256 * 256) onsets0 = e.uiOnsets.load();
+        }
+        const float floorDb = 20.0f * std::log10 (worstFloor + 1.0e-9f);
+        check (floorDb < -50.0f, "a flat F#3 fading near 180 Hz is never learned as hum (floor peaks at " + std::to_string ((int) floorDb) + " dB, mark -50)");
+        const int notes = e.uiOnsets.load() - onsets0;
+        check (notes == 5, "five plucks give five notes, no second trigger 40 ms in (" + std::to_string (notes) + ")");
+    }
+    {
+        // Arp, Original: one note held becomes root, octave, octave and fifth, two octaves
+        ChangelingEngine e; e.prepare (sr);
+        EngineParams p; p.mode = ModeArp; p.input = InputGuitar; p.mix = 1.0f; p.arpPattern = 0; p.bpm = 240.0f; p.sustain = 0.9f;
+        auto x = pluck (mtof (52.0f), sr, 2.5f, 0.0f, 77u, 0.2f);
+        x.insert (x.begin(), (size_t) (0.8f * sr), 0.0f);   // the engine only listens for its first 0.6 s
+        std::vector<int> heard;
+        std::vector<float> L (256), R (256);
+        for (size_t i = 0; i + 256 <= x.size(); i += 256)
+        {
+            for (int j = 0; j < 256; ++j) L[(size_t) j] = R[(size_t) j] = x[i + (size_t) j];
+            const int before = e.uiArpSteps.load();
+            e.process (L.data(), R.data(), 256, p);
+            if (e.uiArpSteps.load() != before)
+            {
+                int newest = -1;   // the voice that just started: its key is the arp key plus the note
+                for (const auto& v : e.voiceView()) if (v.on && v.held && v.key >= 3000 && v.key < 3200) newest = v.key - 3000;   // the engine's arp keys start at 3000
+                if (newest >= 0) heard.push_back (newest);
+            }
+        }
+        std::string got;
+        for (int n : heard) got += std::to_string (n) + " ";
+        bool pattern = heard.size() >= 6;
+        for (int n : heard) pattern = pattern && (n == 52 || n == 64 || n == 71 || n == 76);
+        bool all = false;
+        for (size_t i = 0; i + 4 <= heard.size(); ++i) all = all || (heard[i] == 52 && heard[i + 1] == 64 && heard[i + 2] == 71 && heard[i + 3] == 76);
+        check (pattern && all, "one note arpeggiates its harmonics: root, octave, octave and fifth, two octaves (" + got + ")");
+    }
+}
+
 int main (int argc, char** argv)
 {
     const char* wavDir = argc > 1 ? argv[1] : nullptr;
     trackerSuite();
     engineSuite (wavDir);
+    realGuitarSuite();
     std::printf (failures == 0 ? "All passed\n" : "%d FAILED\n", failures);
     return failures == 0 ? 0 : 1;
 }

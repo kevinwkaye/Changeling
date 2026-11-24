@@ -10,6 +10,12 @@
 
 namespace chg
 {
+// Ring mod: the bottom 5% of the knob is Off, so it's easy to find. Above that it runs
+// from 0.5 Hz (slow tremolo swells, as on the Enzo) to 3 kHz. It used to start at 20 Hz,
+// which only buzzes, with Off in the bottom 2% (0.2.1)
+inline constexpr float kRingOff = 0.05f;
+inline float ringHz (float knob) { return 0.5f * std::pow (6000.0f, std::max (0.0f, knob - kRingOff) / (1.0f - kRingOff)); }
+
 constexpr float kPi = 3.14159265358979f;
 constexpr float kTwoPi = 6.28318530717959f;
 

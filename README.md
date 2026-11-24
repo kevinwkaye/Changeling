@@ -24,7 +24,7 @@ A multi-voice instrument synthesizer VST3, recreating the Meris Enzo in the Flip
 | --- | --- |
 | Poly | Every note of a chord gets its own voice, up to six |
 | Mono | One voice with two oscillators. The tightest tracking, and the one for bass |
-| Arp | Turns what you hold into a pattern at the tapped tempo, quarter notes as on the pedal |
+| Arp | Turns what you hold into a pattern at the tapped tempo, quarter notes as on the pedal. On Original, the loudest note leads, and a single note becomes a pattern of its harmonics |
 | Dry | The synth is off. Pitch shifts your own signal, Sustain compresses it, Modulation wobbles the delay |
 
 Tap the big mode card, or footswitch C, to step through them.
@@ -37,8 +37,8 @@ The Enzo hides a second job behind each knob, reached by holding ALT. Changeling
 | --- | --- | --- |
 | Pitch | Synth pitch, or your pitch in Dry, in semitones | Glide between notes |
 | Cutoff | The filter | Type: ladder low, band or high-pass, or state-variable low, band or high-pass |
-| Env | How far the envelope opens the filter | Bandwidth: wide and gentle to narrow and peaky |
-| Sustain | How long synth notes hold: a short pluck at zero, held for as long as you hold the note at the top. Notes come in at full level and stay steady, as on the pedal | Ring mod frequency. Fully left is off |
+| Env | Triggered: left of noon is a fast attack and sets the decay, right of noon notes swell in more slowly. Follow: right opens the filter as you dig in, left closes it | Bandwidth: wide and gentle to narrow and peaky |
+| Sustain | How long synth notes hold: a short pluck at zero, held for as long as you hold the note at the top. Notes come in at full level and stay steady, as on the pedal | Ring mod frequency, from slow tremolo swells at 0.5 Hz to 3 kHz. The bottom 5% is off |
 | Mod | Detunes the two oscillators | Delay feedback |
 | Mix | Your signal and the synth. Both are at full level at noon | Delay level |
 
@@ -87,14 +87,14 @@ Twelve slots come loaded, each matched to a passage in the pedal's demos by meas
 | 1 | Low Saw | Mono | A warm, held saw bass with a little glide |
 | 2 | Hollow Square | Mono | A bright square that slides between notes |
 | 3 | Sub Octave | Mono | Dark saw with a second oscillator an octave down |
-| 4 | Acid Sweep | Mono | A peaky filter that opens hard on every note |
-| 5 | Glass Stabs | Poly | Soft, rounded square chords with a short echo |
-| 6 | Bright Wash | Poly | Detuned saws held for as long as you hold, in long echoes |
-| 7 | Soft Organ | Poly | Square with an octave on top, steady and plain |
-| 8 | Touch Brass | Poly | The filter follows how hard you play |
+| 4 | Glide Lead | Mono | Portamento sweeping between notes, as at the end of the Enzo demo |
+| 5 | Poly Swell | Poly | Full-wet saw chords that swell in, the demo's poly scene |
+| 6 | Follow Wah | Poly | The filter follows how hard you dig in, like an auto-wah |
+| 7 | Slow Freeze | Poly | Sustain at max with a very slow ring mod: a textured freeze that breathes |
+| 8 | Soft Organ | Poly | Square with an octave on top, steady and plain |
 | 9 | Sparkle Arp | Arp | Your chord as a two-octave square pattern at 246 BPM |
-| 10 | High Plucks | Mono | Short square blips an octave up, with echo |
-| 11 | Glide Lead | Mono | A near-pure tone an octave up with long, slow glides |
+| 10 | Harmonic Arp | Arp | One note becomes root, octave, octave and fifth, two octaves, at sixteenths |
+| 11 | Dry Octave | Dry | Your own guitar an octave down, Sustain as a compressor |
 | 12 | Ring Noise | Poly | Ring mod and loose tracking, for the clangy passages |
 
 Loading a preset shows its name beside FOOTSWITCHES for a moment.

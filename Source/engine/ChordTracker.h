@@ -33,7 +33,7 @@ public:
         work.assign ((size_t) (kFft / 2 + 1), 0.0f);
         for (auto& n : notes) n = Found();
         envFast = envSlow = 0.0f; noiseFloor = 0.004f;
-        sinceOnset = 1 << 20; refractory = 0; nextId = 1;
+        sinceOnset = 1 << 20; refractory = 0; nextId = 1; riseRing.fill (0.0f); riseAt = 0;
         fastA = std::exp (-1.0f / (0.0007f * sr)); fastR = std::exp (-1.0f / (0.030f * sr));
         slowA = std::exp (-1.0f / (0.040f * sr)); slowR = std::exp (-1.0f / (0.250f * sr));
     }
@@ -62,7 +62,12 @@ public:
         const float gate = std::max (2.0e-4f, noiseFloor * 3.5f);
 
         // a strum or pick: the fast envelope jumps over the slow one
-        if (! warm && refractory == 0 && envFast > gate * 1.5f && envFast > envSlow * 1.5f + gate * 0.5f)
+        // and rising now (5 ms ago it was clearly lower), or the slow envelope's 40 ms lag
+        // fires a second "strum" 50 ms into every chord and resets it (0.2.1)
+        const float before = riseRing[(size_t) riseAt];
+        riseRing[(size_t) riseAt] = envFast;
+        riseAt = (riseAt + 1) % kRise;
+        if (! warm && refractory == 0 && envFast > gate * 1.5f && envFast > envSlow * 1.5f + gate * 0.5f && envFast > before * 1.25f)
         {
             sinceOnset = 0;
             refractory = (int) (0.05f * fsA);
@@ -84,6 +89,13 @@ public:
 
 private:
     static constexpr int kBuf = 2048, kFft = 2048, kHop = 32, kMaxLen = 1024;
+  public:
+    // a new note needs three readings in a row (12 ms): the pick's noise threw up 4 to 6
+    // wrong notes for 20 to 50 ms on every strum with two. A held note stays while its
+    // partials stand at 45% of the loudest peak, so ringing strings hold (0.2.1)
+    static inline int kConfirm = 3, kDropFresh = 1, kDropHeld = 15;
+    static inline float kRingRel = 0.45f;
+  private:
 
     // magnitude at a frequency: the highest bin within a quarter semitone, interpolated
     float peakAt (const std::vector<float>& m, float hz) const
@@ -113,6 +125,16 @@ private:
             if (amp[h] > 0.25f * top && amp[h] > 1.6f * std::max (floorL, floorR)) ++count;
         }
         return count;
+    }
+
+    bool stillRinging (float midi) const
+    {
+        const float f0 = mtof (midi);
+        float top = 1.0e-9f;
+        for (size_t b = 1; b < mag.size(); ++b) top = std::max (top, mag[b]);
+        const float a1 = peakAt (mag, f0), a2 = peakAt (mag, 2.0f * f0), a3 = peakAt (mag, 3.0f * f0);
+        int strong = (a1 > kRingRel * top) + (a2 > kRingRel * top) + (a3 > kRingRel * top);
+        return strong >= 2;
     }
 
     static bool isMains (float midi)
@@ -271,7 +293,7 @@ private:
                     pending[(size_t) slot] = picks[(size_t) k]; pendCount[(size_t) slot] = 1;
                     continue;
                 }
-                if (++pendCount[(size_t) pi] < 2) continue;
+                if (++pendCount[(size_t) pi] < kConfirm) continue;
                 pendCount[(size_t) pi] = 0;
             }
             bool dup = false;   // never two copies of one pitch
@@ -291,7 +313,10 @@ private:
         {
             auto& nt = notes[(size_t) i];
             if (! nt.on || matched[(size_t) i]) continue;
-            const int limit = (fresh && ! decided) ? 1 : 15;   // 60 ms of absence once the chord has settled
+            // still ringing, just not picked this time (the louder notes took the attention):
+            // its partials are clearly in the spectrum, so it holds (0.2.1)
+            if (! (fresh && ! decided) && stillRinging (nt.midi)) { missing[(size_t) i] = 0; continue; }
+            const int limit = (fresh && ! decided) ? kDropFresh : kDropHeld;   // 60 ms of absence once the chord has settled
             if (++missing[(size_t) i] >= limit) { nt.on = false; changed = true; }
         }
         if (fresh) decided = true;
@@ -309,6 +334,8 @@ private:
     std::array<float, kMaxNotes> pending {};
     std::array<int, kMaxNotes> pendCount {};
     int quietHops = 0;
+    static constexpr int kRise = 40;
+    std::array<float, kRise> riseRing {}; int riseAt = 0;
     float envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, noiseFloor = 0.004f, peakSinceOnset = 0.0f;
 };
 } // namespace chg

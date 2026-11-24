@@ -47,7 +47,7 @@ public:
         buf.fill (0.0f);
         pos = 0; written = 0; counter = 0; hopCounter = 0;
         envFast = envSlow = 0.0f; noiseFloor = 0.004f; gate = 0.014f;   // assume a noisy input until it proves quiet
-        steadyRef = 0.0f; steadyHops = 0; power = 0.0f; levelSm = 0.0f; bgRef = 0.0f; bgHops = 0; humMemory = 0.0f; warmup = (int) (0.6f * fsA);
+        steadyRef = 0.0f; steadyHops = 0; power = 0.0f; levelSm = 0.0f; bgRef = 0.0f; bgHops = 0; humMemory = 0.0f; warmup = (int) (0.6f * fsA); pitchedHops = 0; mainsHops = 0; mainsEst = -1.0f; riseRing.fill (0.0f); riseAt = 0;
         fastA = std::exp (-1.0f / (0.0007f * sr)); fastR = std::exp (-1.0f / (0.030f * sr));
         slowA = std::exp (-1.0f / (0.040f * sr)); slowR = std::exp (-1.0f / (0.250f * sr));
         state = Idle; note = -1.0f; shown = -1.0f; clarity = 0.0f;
@@ -140,7 +140,9 @@ private:
     float wild() const { return clamp01 (std::max (settings.character, boost)); }
 
     // Mains hum is perfectly periodic, so it reads as a very clear note. It sits at 50 or
-    // 60 Hz and their multiples, which standard-tuned notes miss by 2% or more.
+    // 60 Hz and their multiples to within 0.2% or so. A guitar tuned a third of a semitone
+    // flat puts F#3 0.8% off 180 Hz, so the match is 0.4%: wider read that note as hum,
+    // learned its level and gated every tail for ten seconds (0.2.1)
     static bool mainsPitch (float midi)
     {
         const float hz = mtof (midi);
@@ -155,9 +157,16 @@ private:
         if (settings.range == Synth) return false;
         const bool onMains = (est > 0.0f && mainsPitch (est)) || mainsPitch (note);
         if (! onMains) { steadyHops = 0; steadyRef = levelSm; return false; }
-        if (est > 0.0f && mainsPitch (est) && ! mainsPitch (note) && envFast < 0.3f * notePeak) return true;
-        if (levelSm > steadyRef * 0.84f && levelSm < steadyRef * 1.19f) ++steadyHops; else { steadyHops = 0; steadyRef = levelSm; }
-        return mainsPitch (note) && (float) steadyHops * (float) kHop > 0.35f * fsA;
+        // hum arriving under a fading note: the estimate has to sit on one mains pitch for a
+        // quarter of a second. One stray reading near 100, 120, 150, 200 or 240 Hz is common
+        // on a fading string, and used to end the note and learn its level as hum (0.2.1)
+        if (est > 0.0f && mainsPitch (est) && std::abs (est - mainsEst) < 0.15f) ++mainsHops;
+        else { mainsHops = est > 0.0f && mainsPitch (est) ? 1 : 0; mainsEst = est; }
+        if (mainsHops * kHop > (int) (0.25f * fsA) && ! mainsPitch (note) && envFast < 0.3f * notePeak) return true;
+        // hum holds its level steady (within 8% for half a second); a string pitched near
+        // a mains frequency still fades, about 10 dB a second, and keeps sounding (0.2.1)
+        if (levelSm > steadyRef * 0.92f && levelSm < steadyRef * 1.08f) ++steadyHops; else { steadyHops = 0; steadyRef = levelSm; }
+        return mainsPitch (note) && (float) steadyHops * (float) kHop > 0.5f * fsA;
     }
   public:
     float floorLevel() const { return std::max (noiseFloor, humMemory * 0.6f); }
@@ -170,7 +179,13 @@ private:
         // a pluck: the fast envelope jumps over the slow one
         const float w = wild();
         const float ratio = 1.55f - 0.45f * w;
-        if (refractory == 0 && envFast > gate * 1.5f && envFast > envSlow * ratio + gate * 0.5f)
+        // and it must be rising now: 5 ms ago it was clearly lower. The slow envelope takes
+        // 40 ms to catch up with a pluck, which used to fire a second onset (and retrigger
+        // the synth) 40 ms into every note (0.2.1)
+        const float before = riseRing[(size_t) riseAt];
+        riseRing[(size_t) riseAt] = envFast;
+        riseAt = (riseAt + 1) % kRise;
+        if (refractory == 0 && envFast > gate * 1.5f && envFast > envSlow * ratio + gate * 0.5f && envFast > before * 1.25f)
         {
             onsetPending = true;
             sinceOnset = 0;
@@ -313,7 +328,11 @@ private:
         // Background is whatever holds dead steady: a string always fades, hum and hiss never
         // do. Half a second within a third of a dB and the level is learned as the noise floor.
         // Only while nothing is being played: evenly repeated notes can look steady too.
-        const bool listening = state == Idle || (state == Seeking && written - seekStart > (long long) (0.3f * fsA)) || (state == Active && mainsPitch (note));
+        // A ringing string is pitched and fades: it is never background, however slowly it
+        // fades (a sustained note once read as hum raised the gate 25 dB and cut every tail)
+        if (pitchedHops > 0) --pitchedHops;
+        const bool listening = (state == Idle || (state == Seeking && written - seekStart > (long long) (0.3f * fsA)) || (state == Active && mainsPitch (note)))
+                               && pitchedHops == 0;
         if (listening && levelSm > bgRef * 0.96f && levelSm < bgRef * 1.04f) ++bgHops; else { bgRef = levelSm; bgHops = 0; }
         if (settings.range != Synth && (float) bgHops * (float) kHop > 0.45f * fsA)
             humMemory = std::min (0.1f, std::max (humMemory, envFast));   // its peaks, so the gate sits clear above it
@@ -337,6 +356,8 @@ private:
         clarity = clar;
         float est = period > 0.0f ? ftom (fsA / period) : -1.0f;
         if (est > 0.0f) estimate = est;
+        if (est > 0.0f && clar > 0.7f && ! mainsPitch (est)) pitchedHops = (int) (1.0f * fsA / (float) kHop);
+        else if (state == Active && ! mainsPitch (note)) pitchedHops = std::max (pitchedHops, (int) (0.3f * fsA / (float) kHop));
 
         if (state == Seeking)
         {
@@ -424,6 +445,9 @@ private:
     int pos = 0;
     long long written = 0, seekStart = 0;
     int tauMin = 6, tauMax = 300;
+    static constexpr int kRise = 40;   // 5 ms at the analysis rate
+    std::array<float, kRise> riseRing {}; int riseAt = 0;
+    int pitchedHops = 0, mainsHops = 0; float mainsEst = -1.0f;
     float steadyRef = 0.0f, power = 0.0f, levelSm = 0.0f, bgRef = 0.0f, humMemory = 0.0f; int steadyHops = 0, bgHops = 0, warmup = 0;
     float noiseFloor = 0.004f, envFast = 0, envSlow = 0, fastA = 0, fastR = 0, slowA = 0, slowR = 0, gate = 0.002f;
     int sinceOnset = 1 << 20, refractory = 0, belowGate = 0, changeVotes = 0, octaveVotes = 0, flipHops = 0;
